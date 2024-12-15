@@ -12,6 +12,11 @@ It supports the following formats:
 
 Spreadsheets are processed via the Calamine library and CSV/TSV files by the CSV library.
 
+## Spreadsheet notes
+
+If all columns from the left are populated, then automatic column field assignment should match columns in the *A1+* format. If the first column is empty, then it will be skipped. the same logic applies to rows. The default header keys come from the first populated row unless overridden with the ```--keys``` flag.
+
+
 ## Options:
 - ```path``` Local path on the file system to the source spreadsheet
 - ```--sheet, -s``` case-insensitive sheet name ignoring spaces and punctuation
@@ -28,3 +33,4 @@ Spreadsheets are processed via the Calamine library and CSV/TSV files by the CSV
 - ```--jsonl``` JSON lines, one json object per line. Ideal for debugging and reading long files asynchronously
 - ```--debug``` debug mode
 
+NB: The spreadsheet-to-json library crate, on which this crate relies, has not been published yet. 
