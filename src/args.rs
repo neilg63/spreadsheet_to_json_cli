@@ -98,6 +98,7 @@ impl FromArgs for OptionSet {
     } else {
         ReadMode::Sync
     };
+    let jsonl = args.jsonl || read_mode.is_full_async();
     OptionSet {
         sheet: args.sheet.clone(),
         index: args.index,
@@ -110,7 +111,7 @@ impl FromArgs for OptionSet {
             date_only: args.date_only,
             columns,
         },
-        jsonl: args.jsonl,
+        jsonl,
         read_mode 
     }
     }
