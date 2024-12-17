@@ -33,4 +33,4 @@ If all columns from the left are populated, then automatic column field assignme
 - ```--jsonl``` JSON lines, one json object per line. Ideal for debugging and reading long files asynchronously
 - ```--debug``` debug mode
 
-NB: The spreadsheet-to-json library crate, on which this crate relies, has not been published yet. 
+NB: This is still an alpha release
