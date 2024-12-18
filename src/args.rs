@@ -3,8 +3,9 @@ use std::str::FromStr;
 use clap::Parser;
 use spreadsheet_to_json::heck::ToSnakeCase;
 use spreadsheet_to_json::serde_json::{Number, Value};
+use spreadsheet_to_json::FieldNameMode;
 use spreadsheet_to_json::{is_truthy::*, options::{Column, OptionSet}, Format, ReadMode};
-use spreadsheet_to_json::simple_string_patterns::ToSegments;
+use spreadsheet_to_json::simple_string_patterns::{SimpleMatch, ToSegments};
 
 /// Command line arguments configuration
 #[derive(Parser, Debug)]
@@ -52,6 +53,9 @@ pub struct Args {
   #[clap(long, value_parser, default_value_t = false) ]
   pub debug: bool, // debug mode
 
+  #[clap(short, long, value_parser) ]
+  pub colstyle: Option<String>, // debug mode
+
 }
 
 pub trait FromArgs {
@@ -98,6 +102,11 @@ impl FromArgs for OptionSet {
     } else {
         ReadMode::Sync
     };
+    let mut field_mode = FieldNameMode::AutoA1;
+    if let Some(colstyle) = args.colstyle.clone() {
+        let (col_key, col_mode) = colstyle.to_head_tail(":");
+        field_mode = FieldNameMode::from_key(&col_key, col_mode.starts_with_ci_alphanum("all"))
+    }
     let jsonl = args.jsonl || read_mode.is_full_async();
     OptionSet {
         sheet: args.sheet.clone(),
@@ -112,7 +121,8 @@ impl FromArgs for OptionSet {
             columns,
         },
         jsonl,
-        read_mode 
+        read_mode,
+        field_mode
     }
     }
 }
