@@ -7,7 +7,8 @@ use clap::Parser;
 use args::*;
 use spreadsheet_to_json::error::GenericError;
 use spreadsheet_to_json::indexmap::IndexMap;
-use spreadsheet_to_json::serde_json::Value;
+use spreadsheet_to_json::serde_json::{self, Map, Value};
+use spreadsheet_to_json::tokio::time::Instant;
 use std::io::{Error, Write};
 use uuid::Uuid;
 use spreadsheet_to_json::{tokio, serde_json::json};
@@ -17,7 +18,14 @@ use std::fs::OpenOptions;
 #[tokio::main]
 async fn main() -> Result<(), Error>{
   let args = Args::parse();
+  let debug_mode = args.debug;
   let opts = OptionSet::from_args(&args);
+
+  let start = if debug_mode {
+    Some(Instant::now()) // Start timer here
+  } else {
+    None
+  };
 
   let mut output_lines = false;
   let mut lines: Option<String> = None;
@@ -35,19 +43,21 @@ async fn main() -> Result<(), Error>{
     render_spreadsheet_direct(&opts).await
   };
   
-  let json_value = match result {
-    Err(msg) => json!{ { "error": true, "message": msg.to_string(), "options": opts.to_json() } },
+  let result_lines = match result {
+    Err(msg) => {
+      let mut lines = vec![format!("error: {}", msg)];
+      lines.append(&mut opts.to_lines());
+      lines
+    },
     Ok(data_set) => {
       output_lines = args.jsonl;
       if output_lines {
           lines = Some(data_set.rows().join("\n"));
       }
       if args.exclude_cells {
-          json!({
-              "options": opts.to_json() 
-          })
+          opts.to_lines()
       } else {
-          data_set.to_json()
+          data_set.to_output_lines(args.jsonl)
       }
     }
   };
@@ -56,7 +66,16 @@ async fn main() -> Result<(), Error>{
         println!("{}", lines_string);
     }
   } else {
-      println!("{}", json_value);
+      
+      for line in result_lines {
+        println!("{}", line);
+      }
+  }
+  if debug_mode {
+    if let Some(start_timer) = start {
+      let duration = start_timer.elapsed(); // Stop timer here
+      println!("Total processing time: {:?}", duration);
+    }
   }
   Ok(())
 }
@@ -90,3 +109,52 @@ fn append_line_to_file(file_path: &PathBuf, line: &str) -> Result<(), GenericErr
     Err(GenericError("file_error"))
   }
 }
+
+/* 
+pub fn to_output_lines(json_value: Value) -> Vec<String> {
+  let mut lines: Vec<String> = vec![];
+  if let Value::Object(map) = json_value {
+    for (key, value) in map {
+      let string_val = match key.as_str() {
+        "data" => value.to_string(),
+        _ => match value {
+          Value::Object(v) => json_map_to_value(v),
+          Value::Array(v) => json_array_to_value(v),
+          Value::String(v) => v,
+          _ => value.to_string()
+        }
+      };
+      if string_val != "[]" {
+
+        let separator = match key.as_str() {
+          "data" => "\n",
+          _ => " "
+        };
+        lines.push(format!("{}:{}{}", key, separator, string_val));
+      }
+    }
+  }
+  lines
+}
+
+fn json_value_to_plain_string(value: Value) -> String {
+  match value {
+    Value::String(v) => v,
+    _=> value.to_string()
+  }
+}
+
+fn json_map_to_value(map: Map<String, Value>) -> String {
+  let mut parts: Vec<String> = vec![];
+  for (key, value) in map {
+    parts.push(format!("{}: {}", key, json_value_to_plain_string(value)));
+  }
+  parts.join(", ")
+}
+
+
+fn json_array_to_value(items: Vec<Value>) -> String {
+  items.into_iter().map(|value| {
+    json_value_to_plain_string(value)
+  }).collect::<Vec<String>>().join(", ")
+} */
