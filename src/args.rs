@@ -47,8 +47,11 @@ pub struct Args {
   #[clap(short = 'p',long, value_parser, default_value_t = false) ]
   pub preview: bool, // test validity only and show options
 
-  #[clap(long, value_parser, default_value_t = false) ]
-  pub jsonl: bool, // debug mode
+  #[clap(short = 'l', long, value_parser, default_value_t = false) ]
+  pub lines: bool, // debug mode
+
+  #[clap(short = 'r', long, value_parser, default_value_t = false) ]
+  pub rows: bool, // debug mode
 
   #[clap(long, value_parser, default_value_t = false) ]
   pub debug: bool, // debug mode
@@ -107,7 +110,7 @@ impl FromArgs for OptionSet {
         let (col_key, col_mode) = colstyle.to_head_tail(":");
         field_mode = FieldNameMode::from_key(&col_key, col_mode.starts_with_ci_alphanum("all"));
     }
-    let jsonl = args.jsonl || read_mode.is_full_async();
+    let jsonl = args.lines || read_mode.is_full_async();
     OptionSet {
         sheet: args.sheet.clone(),
         index: args.index,

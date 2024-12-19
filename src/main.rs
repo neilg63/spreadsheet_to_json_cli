@@ -27,7 +27,7 @@ async fn main() -> Result<(), Error>{
     None
   };
 
-  let mut output_lines = false;
+  let mut rows_only = false;
   let mut lines: Option<String> = None;
   let result = if opts.is_async() {
     match start_uuid_file() {
@@ -37,7 +37,7 @@ async fn main() -> Result<(), Error>{
             });
             render_spreadsheet_core(&opts, Some(callback), Some(&file_ref)).await
         },
-        Err(msg) => Err(GenericError("uuid_error"))
+        Err(msg) => Err(msg)
     }
   } else {
     render_spreadsheet_direct(&opts).await
@@ -50,18 +50,22 @@ async fn main() -> Result<(), Error>{
       lines
     },
     Ok(data_set) => {
-      output_lines = args.jsonl;
-      if output_lines {
-          lines = Some(data_set.rows().join("\n"));
+      rows_only = args.lines || args.rows;
+      if rows_only {
+          if args.lines {
+            lines = Some(data_set.rows().join("\n"));
+          } else {
+            lines = Some(build_indented_json_rows(&data_set.rows()));
+          }
       }
       if args.exclude_cells {
           opts.to_lines()
       } else {
-          data_set.to_output_lines(args.jsonl)
+          data_set.to_output_lines(args.lines)
       }
     }
   };
-  if output_lines {
+  if rows_only {
     if let Some(lines_string) = lines {
         println!("{}", lines_string);
     }
@@ -80,6 +84,10 @@ async fn main() -> Result<(), Error>{
   Ok(())
 }
 
+
+pub fn build_indented_json_rows(rows: &[String]) -> String {
+  format!("[\n\t{}\n]", &rows.join(",\n\t"))
+}
 
 /// Create a new file with a random UUID and return a result with PathBuf + UUID String
 pub fn start_uuid_file() -> Result<(PathBuf, String), GenericError> {
