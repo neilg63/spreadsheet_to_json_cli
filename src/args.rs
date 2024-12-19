@@ -105,7 +105,7 @@ impl FromArgs for OptionSet {
     let mut field_mode = FieldNameMode::AutoA1;
     if let Some(colstyle) = args.colstyle.clone() {
         let (col_key, col_mode) = colstyle.to_head_tail(":");
-        field_mode = FieldNameMode::from_key(&col_key, col_mode.starts_with_ci_alphanum("all"))
+        field_mode = FieldNameMode::from_key(&col_key, col_mode.starts_with_ci_alphanum("all"));
     }
     let jsonl = args.jsonl || read_mode.is_full_async();
     OptionSet {
