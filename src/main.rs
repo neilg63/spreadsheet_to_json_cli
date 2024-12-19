@@ -7,7 +7,7 @@ use clap::Parser;
 use args::*;
 use spreadsheet_to_json::error::GenericError;
 use spreadsheet_to_json::indexmap::IndexMap;
-use spreadsheet_to_json::serde_json::{self, Map, Value};
+use spreadsheet_to_json::serde_json::Value;
 use spreadsheet_to_json::tokio::time::Instant;
 use std::io::{Error, Write};
 use uuid::Uuid;
