@@ -40,7 +40,7 @@ async fn main() -> Result<(), Error>{
         Err(msg) => Err(msg)
     }
   } else {
-    render_spreadsheet_direct(&opts)
+    render_spreadsheet_direct(&opts).await
   };
   
   let result_lines = match result {

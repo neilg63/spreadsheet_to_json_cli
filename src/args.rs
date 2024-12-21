@@ -71,7 +71,7 @@ impl FromArgs for OptionSet {
     let mut columns: Vec<Column> = vec![];
     let mut index = 0;
     if let Some(k_string) = args.keys.clone() {
-        let split_parts = k_string.to_segments(",");
+        let split_parts = k_string.to_parts(",");
         for ck in split_parts {
             let sub_parts = ck.to_segments(":");
             let num_subs = sub_parts.len();
