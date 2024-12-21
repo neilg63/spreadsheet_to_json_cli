@@ -67,13 +67,12 @@ async fn main() -> Result<(), Error>{
   };
   if rows_only {
     if let Some(lines_string) = lines {
-        println!("{}", lines_string);
+      println!("{}", lines_string);
     }
   } else {
-      
-      for line in result_lines {
-        println!("{}", line);
-      }
+    for line in result_lines {
+      println!("{}", line);
+    }
   }
   if debug_mode {
     if let Some(start_timer) = start {
