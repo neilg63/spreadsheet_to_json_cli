@@ -12,7 +12,7 @@ use spreadsheet_to_json::tokio::time::Instant;
 use std::io::{Error, Write};
 use uuid::Uuid;
 use spreadsheet_to_json::{tokio, serde_json::json};
-use spreadsheet_to_json::{render_spreadsheet_core, render_spreadsheet_direct, OptionSet, RowOptionSet};
+use spreadsheet_to_json::{process_spreadsheet_async, render_spreadsheet_direct, OptionSet, RowOptionSet};
 use std::fs::OpenOptions;
 
 #[tokio::main]
@@ -35,7 +35,7 @@ async fn main() -> Result<(), Error>{
             let callback: Box<dyn Fn(IndexMap<String, Value>) -> Result<(), GenericError> + Send + Sync> = Box::new(move |row: IndexMap<String, Value>| {
                 append_line_to_file(&pb, &json!(row).to_string())
             });
-            render_spreadsheet_core(&opts, Some(callback), Some(&file_ref)).await
+            process_spreadsheet_async(&opts, callback, Some(&file_ref)).await
         },
         Err(msg) => Err(msg)
     }
