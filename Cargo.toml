@@ -7,7 +7,7 @@ edition = "2021"
 args = "^2.2.0"
 clap = { version = "^4.5.22", features = ["env", "derive"] }
 dotenv = { version = "^0.15.0", features = ["clap", "cli"] }
-spreadsheet-to-json = "0.1.5"
+spreadsheet-to-json = "0.1.6"
 uuid = { version = "^1.11.0", features = ["fast-rng", "v4"] }
 
 # [patch.crates-io]
