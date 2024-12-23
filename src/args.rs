@@ -45,7 +45,7 @@ pub struct Args {
   pub deferred: bool, // test validity only and show options
 
   #[clap(short = 'p',long, value_parser, default_value_t = false) ]
-  pub preview: bool, // test validity only and show options
+  pub preview: bool, // show preview only
 
   #[clap(short = 'l', long, value_parser, default_value_t = false) ]
   pub lines: bool, // debug mode
@@ -107,7 +107,7 @@ impl FromArgs for OptionSet {
     };
     let mut field_mode = FieldNameMode::AutoA1;
     if let Some(colstyle) = args.colstyle.clone() {
-        let (col_key, col_mode) = colstyle.to_head_tail(":");
+        let (col_key, col_mode) = colstyle.to_start_end(":");
         field_mode = FieldNameMode::from_key(&col_key, col_mode.starts_with_ci_alphanum("all"));
     }
     let jsonl = args.lines || read_mode.is_full_async();
