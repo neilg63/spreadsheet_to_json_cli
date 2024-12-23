@@ -12,7 +12,7 @@ use spreadsheet_to_json::tokio::time::Instant;
 use std::io::{Error, Write};
 use uuid::Uuid;
 use spreadsheet_to_json::{tokio, serde_json::json};
-use spreadsheet_to_json::{process_spreadsheet_async, render_spreadsheet_direct, OptionSet, RowOptionSet};
+use spreadsheet_to_json::{process_spreadsheet_async, process_spreadsheet_immediate, OptionSet, RowOptionSet};
 use std::fs::OpenOptions;
 
 #[tokio::main]
@@ -40,9 +40,8 @@ async fn main() -> Result<(), Error>{
         Err(msg) => Err(msg)
     }
   } else {
-    render_spreadsheet_direct(&opts).await
+    process_spreadsheet_immediate(&opts).await
   };
-  
   let result_lines = match result {
     Err(msg) => {
       let mut lines = vec![format!("error: {}", msg)];
