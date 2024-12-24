@@ -49,7 +49,7 @@ async fn main() -> Result<(), Error>{
       lines
     },
     Ok(data_set) => {
-      rows_only = args.lines || args.rows;
+      rows_only = (args.lines && !args.preview) || args.rows;
       if rows_only {
           if args.lines {
             lines = Some(data_set.rows().join("\n"));
