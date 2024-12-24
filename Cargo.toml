@@ -10,5 +10,5 @@ dotenv = { version = "^0.15.0", features = ["clap", "cli"] }
 spreadsheet-to-json = "0.1.7"
 uuid = { version = "^1.11.0", features = ["fast-rng", "v4"] }
 
-[patch.crates-io]
-spreadsheet-to-json = { path = "../spreadsheet_to_json" }
+# [patch.crates-io]
+# spreadsheet-to-json = { path = "../spreadsheet_to_json" }
