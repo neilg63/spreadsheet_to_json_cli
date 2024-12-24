@@ -99,7 +99,7 @@ impl FromArgs for OptionSet {
         }
     }
     let read_mode = if args.preview {
-        ReadMode::PreviewAsync
+        ReadMode::PreviewMultiple
     } else if args.deferred {
         ReadMode::Async
     } else {
@@ -110,10 +110,15 @@ impl FromArgs for OptionSet {
         let (col_key, col_mode) = colstyle.to_start_end(":");
         field_mode = FieldNameMode::from_key(&col_key, col_mode.starts_with_ci_alphanum("all"));
     }
-    let jsonl = args.lines || read_mode.is_full_async();
+    let jsonl = args.lines || read_mode.is_async();
+    let selected = if let Some(sheet) = args.sheet.clone() {
+        Some(sheet.to_segments(","))
+    } else {
+        None
+    };
     OptionSet {
-        sheet: args.sheet.clone(),
-        index: args.index,
+        selected,
+        indices: vec![args.index],
         path: args.path.clone(),
         max: args.max,
         header_row: args.header_row,
