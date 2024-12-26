@@ -69,34 +69,42 @@ impl FromArgs for OptionSet {
     fn from_args(args: &Args) -> Self {
 
     let mut columns: Vec<Column> = vec![];
-    let mut index = 0;
     if let Some(k_string) = args.keys.clone() {
-        let split_parts = k_string.to_parts(",");
-        for ck in split_parts {
-            let sub_parts = ck.to_segments(":");
-            let num_subs = sub_parts.len();
-            if num_subs < 2 {
-                columns.push(Column::from_key_index(Some(&ck.to_snake_case()), index));
+      let split_parts = k_string.to_parts(",");
+      for ck in split_parts {
+        let sub_parts = ck.to_segments(":");
+        let num_subs = sub_parts.len();
+        if num_subs < 2 {
+          let key_opt = if ck.len() > 0 {
+            let ck_sc = ck.to_snake_case();
+            if ck_sc.len() > 0 {
+              Some(ck_sc)
             } else {
-                let fmt = Format::from_str(sub_parts.get(1).unwrap_or(&"auto".to_string())).unwrap_or(Format::Auto);
-                let mut default_val = None;
-                if let Some(def_val) = sub_parts.get(2) {
-                    default_val = match fmt {
-                        Format::Integer => Some(Value::Number(Number::from_i128(i128::from_str(&def_val).unwrap()).unwrap())),
-                        Format::Boolean => {
-                            if let Some(is_true) = is_truthy_core(def_val, false) {
-                                Some(Value::Bool(is_true))
-                            } else {
-                                None
-                            }
-                        },
-                        _ => Some(Value::String(def_val.clone()))
-                    }
-                }
-                columns.push(Column::from_key_ref_with_format(Some(&ck.to_snake_case()), index, fmt, default_val, false, false));
+              None
             }
-            index += 1;
+          } else {
+            None
+          };
+          columns.push(Column::new(key_opt.as_deref()));
+        } else {
+          let fmt = Format::from_str(sub_parts.get(1).unwrap_or(&"auto".to_string())).unwrap_or(Format::Auto);
+          let mut default_val = None;
+          if let Some(def_val) = sub_parts.get(2) {
+            default_val = match fmt {
+              Format::Integer => Some(Value::Number(Number::from_i128(i128::from_str(&def_val).unwrap()).unwrap())),
+              Format::Boolean => {
+                if let Some(is_true) = is_truthy_core(def_val, false) {
+                  Some(Value::Bool(is_true))
+                } else {
+                  None
+                }
+              },
+              _ => Some(Value::String(def_val.clone()))
+            }
+          }
+          columns.push(Column::from_key_ref_with_format(Some(&ck.to_snake_case()), fmt, default_val, false, false));
         }
+      }
     }
     let read_mode = if args.preview {
         ReadMode::PreviewMultiple
@@ -124,7 +132,7 @@ impl FromArgs for OptionSet {
         header_row: args.header_row,
         omit_header: args.omit_header,
         rows: crate::RowOptionSet { 
-            euro_number_format: args.euro_number_format,
+            decimal_comma: args.euro_number_format,
             date_only: args.date_only,
             columns,
         },
