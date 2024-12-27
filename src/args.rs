@@ -100,9 +100,11 @@ impl FromArgs for OptionSet {
                 }
               },
               _ => Some(Value::String(def_val.clone()))
-            }
+            };
           }
-          columns.push(Column::from_key_ref_with_format(Some(&ck.to_snake_case()), fmt, default_val, false, false));
+
+          let key_name = sub_parts.get(0).unwrap_or(&ck).to_snake_case();
+          columns.push(Column::from_key_ref_with_format(Some(&key_name), fmt, default_val, false, false));
         }
       }
     }
