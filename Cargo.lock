@@ -767,7 +767,9 @@ dependencies = [
 
 [[package]]
 name = "spreadsheet-to-json"
-version = "0.1.10"
+version = "0.1.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b6ecf6b1f76a1ca7457fe27f4f7d3ed387920f9b93235c77e30536c1a3070f6"
 dependencies = [
  "calamine",
  "chrono",
