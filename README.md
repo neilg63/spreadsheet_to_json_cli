@@ -28,10 +28,9 @@ If all columns from the left are populated, then automatic column field assignme
 - ```--max, -m``` max number of rows
 - ```--header_row, -t``` row index used for the header row, if it is not the first row. This is only applicable to spreadsheets and useful if the top rows contain headers or descriptions
 - ```--omit_header, -o``` skip the header and assign columns to letters (a, b, c, d .... z, aa, ab etc..)
-- ```--exclude_cells``` Skip row processing and validate the file only
 - ```--deferred, -d``` Defer row processing to an asynchronous task
 - ```--preview``` show preview of the first twenty lines only
-- ```--jsonl``` JSON lines, one json object per line. Ideal for debugging and reading long files asynchronously
+- ```--lines, -l``` JSON lines, one json object per line. Ideal for debugging and reading long files asynchronously
 - ```--debug``` debug mode
 
 NB: This is still an alpha release
