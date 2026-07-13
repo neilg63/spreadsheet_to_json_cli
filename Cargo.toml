@@ -1,5 +1,5 @@
 [package]
-name = "spreadsheet-to-json-cli"
+name = "spread-cli"
 version = "0.1.0"
 edition = "2021"
 
@@ -12,5 +12,8 @@ to_segments = "0.1.2"
 simple-string-patterns = "0.4.0"
 uuid = { version = "^1.23.5", features = ["fast-rng", "v4"] }
 
-# [patch.crates-io]
-# spreadsheet-to-json = { path = "../spreadsheet_to_json" }
+[dev-dependencies]
+rust_xlsxwriter = "0.89"
+serde_json = "1.0"
+
+
