@@ -8,12 +8,12 @@ use clap::Parser;
 use args::*;
 use spreadsheet_to_json::error::GenericError;
 use spreadsheet_to_json::indexmap::IndexMap;
-use spreadsheet_to_json::serde_json::Value;
+use spreadsheet_to_json::serde_json::{Value, to_string_pretty};
 use spreadsheet_to_json::tokio::time::Instant;
 use std::io::Write;
 use uuid::Uuid;
 use spreadsheet_to_json::{tokio, serde_json::json};
-use spreadsheet_to_json::{process_spreadsheet_async, process_spreadsheet_immediate, OptionSet, RowOptionSet, PathData};
+use spreadsheet_to_json::{process_spreadsheet_async, process_spreadsheet_immediate, OptionSet, RowOptionSet, PathData, ResultSet};
 use std::fs::OpenOptions;
 
 #[tokio::main]
@@ -24,13 +24,13 @@ async fn main() -> ExitCode {
   let opts = match OptionSet::from_args(&args) {
     Ok(opts) => opts,
     Err(msg) => {
-      eprintln!("error: {}", msg);
+      print_error(args.json, &msg);
       return ExitCode::from(2);
     }
   };
 
   if let Err(msg) = validate_path(args.path.as_deref()) {
-    eprintln!("error: {}", msg);
+    print_error(args.json, &msg);
     return ExitCode::from(2);
   }
 
@@ -56,7 +56,7 @@ async fn main() -> ExitCode {
   };
   let data_set = match result {
     Err(msg) => {
-      eprintln!("error: {}", describe_error(&msg));
+      print_error(args.json, &describe_error(&msg));
       if debug_mode {
         eprintln!("details: {}", msg);
         for line in opts.to_lines() {
@@ -67,6 +67,16 @@ async fn main() -> ExitCode {
     },
     Ok(data_set) => data_set
   };
+
+  if args.json {
+    println!("{}", to_string_pretty(&build_json_result(&data_set, &opts)).unwrap());
+    if debug_mode {
+      if let Some(start_timer) = start {
+        eprintln!("Total processing time: {:?}", start_timer.elapsed());
+      }
+    }
+    return ExitCode::SUCCESS;
+  }
 
   let rows_only = (args.lines && !args.preview) || args.rows;
   if rows_only {
@@ -122,6 +132,67 @@ fn validate_path(path_opt: Option<&str>) -> Result<(), String> {
     ));
   }
   Ok(())
+}
+
+/// Prints an error to stderr, as a JSON object when --json is active so
+/// scripted callers can rely on a consistent shape either way.
+fn print_error(json_mode: bool, msg: &str) {
+  if json_mode {
+    eprintln!("{}", json!({ "error": msg }));
+  } else {
+    eprintln!("error: {}", msg);
+  }
+}
+
+/// Builds the single structured JSON object emitted by --json, covering every
+/// query mode (single sheet, multi-sheet preview, CSV/TSV, deferred).
+fn build_json_result(result: &ResultSet, opts: &OptionSet) -> Value {
+  let is_workbook = result.extension != "csv" && result.extension != "tsv";
+  let mut out: IndexMap<String, Value> = IndexMap::new();
+
+  out.insert("extension".to_string(), json!(result.extension));
+  if is_workbook {
+    out.insert("sheets".to_string(), json!(result.sheets));
+    out.insert("column_style".to_string(), json!(opts.field_mode.to_string()));
+  }
+  if is_workbook {
+    if let Some(selected) = &result.selected {
+      out.insert("selected_sheet".to_string(), json!(selected.first().cloned().unwrap_or_default()));
+    }
+  }
+  out.insert("row_count".to_string(), json!(result.num_rows));
+  out.insert("fields".to_string(), json!(result.keys));
+  out.insert("multimode".to_string(), json!(result.multimode()));
+  if is_workbook {
+    if result.selected.is_some() {
+      out.insert("sheet_indices".to_string(), json!(opts.indices.first().copied().unwrap_or(0)));
+    }
+  }
+  out.insert("file name".to_string(), json!(result.filename));
+  out.insert("max_rows".to_string(), json!(opts.max_rows()));
+  out.insert("mode".to_string(), json!(opts.row_mode()));
+  out.insert("headers".to_string(), json!(opts.header_mode()));
+  out.insert("header_row".to_string(), json!(opts.header_row));
+  out.insert("decimal_separator".to_string(), json!(opts.rows.decimal_separator()));
+  out.insert("date_mode".to_string(), json!(opts.rows.date_mode()));
+  if let Some(out_ref) = &result.out_ref {
+    out.insert("output_reference".to_string(), json!(out_ref));
+  }
+
+  let data = if result.multimode() {
+    let sheets: Vec<Value> = result.data.sheets().iter().map(|sheet| json!({
+      "sheet": sheet.name(),
+      "row_count": sheet.num_rows,
+      "fields": sheet.keys,
+      "rows": sheet.rows
+    })).collect();
+    json!(sheets)
+  } else {
+    json!(result.to_vec())
+  };
+  out.insert("data".to_string(), data);
+
+  json!(out)
 }
 
 /// Map the library's internal error codes to plain-English messages.

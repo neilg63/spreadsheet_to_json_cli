@@ -96,7 +96,7 @@ fn no_path_reports_usage_error() {
 #[test]
 fn bad_keys_integer_default_reports_error_without_panicking() {
     let path = fixture("products.xlsx");
-    let out = run(&["-k", "qty:i:notanumber", path.to_str().unwrap()]);
+    let out = run(&["-k", "qty|i|notanumber", path.to_str().unwrap()]);
     assert_eq!(out.status.code(), Some(2));
     assert!(
         !stderr(&out).contains("panicked"),
@@ -138,9 +138,9 @@ fn max_flag_limits_row_count() {
 }
 
 #[test]
-fn keys_flag_renames_columns() {
+fn keys_flag_renames_columns_by_source_key() {
     let path = fixture("products.xlsx");
-    let out = run(&["-r", "-l", "-k", "product_code,product_name", path.to_str().unwrap()]);
+    let out = run(&["-r", "-l", "-k", "sku:product_code,name:product_name", path.to_str().unwrap()]);
     assert!(out.status.success());
     let rows = parse_jsonl_rows(&stdout(&out));
     assert_eq!(rows.len(), 3);
@@ -148,6 +148,45 @@ fn keys_flag_renames_columns() {
     assert_eq!(rows[0]["product_name"], "Widget");
     // untouched columns keep their auto-detected header names
     assert_eq!(rows[0]["price"], 9.99);
+}
+
+#[test]
+fn keys_flag_overrides_one_field_out_of_many_without_padding() {
+    // the whole point of source-key matching: override a single field out of many,
+    // without needing empty placeholder entries for the columns ahead of it.
+    let path = fixture("products.xlsx");
+    let out = run(&["-r", "-l", "-k", "qty:quantity|integer", path.to_str().unwrap()]);
+    assert!(out.status.success());
+    let rows = parse_jsonl_rows(&stdout(&out));
+    assert_eq!(rows[0]["quantity"], 100);
+    assert!(rows[0].get("qty").is_none());
+    // everything else is untouched
+    assert_eq!(rows[0]["sku"], "SKU001");
+    assert_eq!(rows[0]["price"], 9.99);
+}
+
+#[test]
+fn keys_flag_format_only_override_keeps_natural_name() {
+    // omitting ":new_key" before the "|" means "keep the natural name, just change the format"
+    let path = fixture("products.csv");
+    let out = run(&["-r", "-l", "-k", "qty|boolean", path.to_str().unwrap()]);
+    assert!(out.status.success());
+    let rows = parse_jsonl_rows(&stdout(&out));
+    assert_eq!(rows[0]["qty"], true); // 100 -> truthy
+    assert_eq!(rows[2]["qty"], false); // 0 -> falsy
+    assert!(rows[0].get("quantity").is_none());
+}
+
+#[test]
+fn keys_flag_unmatched_source_key_is_silently_ignored() {
+    let path = fixture("products.xlsx");
+    let out = run(&["-r", "-l", "-k", "nonexistent_field:renamed", path.to_str().unwrap()]);
+    assert!(out.status.success());
+    let rows = parse_jsonl_rows(&stdout(&out));
+    assert_eq!(rows.len(), 3);
+    // no error, no warning -- just a no-op
+    assert!(stderr(&out).is_empty());
+    assert_eq!(rows[0]["sku"], "SKU001");
 }
 
 #[test]
@@ -221,4 +260,94 @@ fn real_world_ods_preview_lists_both_sheets_with_correct_totals() {
     assert!(text.contains("row count: 118"), "got: {}", text);
     assert!(text.contains("Sheet `Rsults-2` (17)"), "got: {}", text);
     assert!(text.contains("Sheet `results 1` (101)"), "got: {}", text);
+}
+
+// --- --json mode: one structured object per invocation, for piping to jq ---
+
+fn parse_json(text: &str) -> serde_json::Value {
+    serde_json::from_str(text).unwrap_or_else(|e| panic!("invalid JSON output: {}\n---\n{}", e, text))
+}
+
+#[test]
+fn json_mode_single_sheet_has_expected_shape() {
+    let path = fixture("products.xlsx");
+    let out = run(&["--json", "-m", "2", path.to_str().unwrap()]);
+    assert!(out.status.success());
+    let v = parse_json(&stdout(&out));
+
+    assert_eq!(v["extension"], "xlsx");
+    assert_eq!(v["sheets"], serde_json::json!(["Products"]));
+    assert_eq!(v["column_style"], "A1 auto");
+    assert_eq!(v["selected_sheet"], "Products");
+    assert_eq!(v["row_count"], 4); // 3 data rows + header
+    assert_eq!(v["fields"], serde_json::json!(["sku", "name", "price", "qty", "in_stock"]));
+    assert_eq!(v["multimode"], false);
+    assert_eq!(v["sheet_indices"], 0);
+    assert_eq!(v["file name"], "products.xlsx");
+    assert_eq!(v["max_rows"], 2);
+    assert_eq!(v["mode"], "JSON");
+    assert_eq!(v["headers"], "capture");
+    assert_eq!(v["header_row"], 0);
+    assert_eq!(v["decimal_separator"], ".");
+    assert_eq!(v["date_mode"], "date/time");
+
+    let data = v["data"].as_array().expect("data should be an array");
+    assert_eq!(data.len(), 2); // capped by -m 2
+    assert_eq!(data[0]["sku"], "SKU001");
+    assert_eq!(data[0]["price"], 9.99);
+    assert_eq!(data[0]["in_stock"], true);
+}
+
+#[test]
+fn json_mode_omits_sheet_fields_for_csv() {
+    let path = fixture("products.csv");
+    let out = run(&["--json", path.to_str().unwrap()]);
+    assert!(out.status.success());
+    let v = parse_json(&stdout(&out));
+
+    assert_eq!(v["extension"], "csv");
+    let obj = v.as_object().unwrap();
+    for key in ["sheets", "column_style", "selected_sheet", "sheet_indices"] {
+        assert!(!obj.contains_key(key), "'{}' should be absent for CSV, got: {}", key, v);
+    }
+
+    let data = v["data"].as_array().expect("data should be an array");
+    assert_eq!(data.len(), 3);
+    assert_eq!(data[0]["sku"], "SKU101");
+    assert_eq!(data[0]["in_stock"], true);
+}
+
+#[test]
+fn json_mode_preview_returns_data_per_sheet() {
+    let path = fixture("multi_sheet.xlsx");
+    let out = run(&["--json", "-p", path.to_str().unwrap()]);
+    assert!(out.status.success());
+    let v = parse_json(&stdout(&out));
+
+    assert_eq!(v["multimode"], true);
+    assert_eq!(v["sheets"], serde_json::json!(["Summary", "Details"]));
+    // no single selected sheet or index when every sheet is being read
+    let obj = v.as_object().unwrap();
+    assert!(!obj.contains_key("selected_sheet"));
+    assert!(!obj.contains_key("sheet_indices"));
+
+    let data = v["data"].as_array().expect("data should be an array");
+    assert_eq!(data.len(), 2);
+    assert_eq!(data[0]["sheet"], "Summary");
+    assert_eq!(data[0]["rows"][0]["region"], "North");
+    assert_eq!(data[1]["sheet"], "Details");
+    assert_eq!(data[1]["rows"][0]["note"], "first");
+}
+
+#[test]
+fn json_mode_reports_errors_as_json_on_stderr() {
+    let out = run(&["--json", "./does-not-exist.xlsx"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stdout(&out).is_empty());
+    let v = parse_json(&stderr(&out));
+    assert!(
+        v["error"].as_str().unwrap_or("").contains("file not found"),
+        "got: {}",
+        v
+    );
 }
