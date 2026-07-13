@@ -1,0 +1,62 @@
+//! Regenerates the .xlsx fixtures under tests/fixtures/ used by the integration tests.
+//! Run with: cargo run --example gen_fixtures
+
+use rust_xlsxwriter::Workbook;
+
+fn main() -> Result<(), rust_xlsxwriter::XlsxError> {
+    gen_products()?;
+    gen_multi_sheet()?;
+    Ok(())
+}
+
+/// Single-sheet workbook with mixed column types: text, decimal, integer, boolean.
+fn gen_products() -> Result<(), rust_xlsxwriter::XlsxError> {
+    let mut workbook = Workbook::new();
+    let sheet = workbook.add_worksheet().set_name("Products")?;
+
+    let headers = ["sku", "name", "price", "qty", "in_stock"];
+    for (col, header) in headers.iter().enumerate() {
+        sheet.write_string(0, col as u16, *header)?;
+    }
+
+    let rows: [(&str, &str, f64, u32, bool); 3] = [
+        ("SKU001", "Widget", 9.99, 100, true),
+        ("SKU002", "Gadget", 19.5, 50, true),
+        ("SKU003", "Gizmo", 5.0, 0, false),
+    ];
+    for (i, (sku, name, price, qty, in_stock)) in rows.iter().enumerate() {
+        let row = (i + 1) as u32;
+        sheet.write_string(row, 0, *sku)?;
+        sheet.write_string(row, 1, *name)?;
+        sheet.write_number(row, 2, *price)?;
+        sheet.write_number(row, 3, *qty as f64)?;
+        sheet.write_boolean(row, 4, *in_stock)?;
+    }
+
+    workbook.save("tests/fixtures/products.xlsx")?;
+    Ok(())
+}
+
+/// Two-sheet workbook for testing --preview and --sheet selection.
+fn gen_multi_sheet() -> Result<(), rust_xlsxwriter::XlsxError> {
+    let mut workbook = Workbook::new();
+
+    let summary = workbook.add_worksheet().set_name("Summary")?;
+    summary.write_string(0, 0, "region")?;
+    summary.write_string(0, 1, "total")?;
+    summary.write_string(1, 0, "North")?;
+    summary.write_number(1, 1, 120.0)?;
+    summary.write_string(2, 0, "South")?;
+    summary.write_number(2, 1, 80.0)?;
+
+    let details = workbook.add_worksheet().set_name("Details")?;
+    details.write_string(0, 0, "id")?;
+    details.write_string(0, 1, "note")?;
+    details.write_number(1, 0, 1.0)?;
+    details.write_string(1, 1, "first")?;
+    details.write_number(2, 0, 2.0)?;
+    details.write_string(2, 1, "second")?;
+
+    workbook.save("tests/fixtures/multi_sheet.xlsx")?;
+    Ok(())
+}
