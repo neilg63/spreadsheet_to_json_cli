@@ -5,7 +5,8 @@ use spreadsheet_to_json::heck::ToSnakeCase;
 use spreadsheet_to_json::serde_json::{Number, Value};
 use spreadsheet_to_json::FieldNameMode;
 use spreadsheet_to_json::{is_truthy::*, options::{Column, OptionSet}, Format, ReadMode};
-use spreadsheet_to_json::simple_string_patterns::{SimpleMatch, ToSegments};
+use simple_string_patterns::SimpleMatch;
+use to_segments::ToSegments;
 
 /// Command line arguments configuration
 #[derive(Parser, Debug)]
@@ -62,11 +63,11 @@ pub struct Args {
 }
 
 pub trait FromArgs {
-    fn from_args(args: &Args) -> Self;
+    fn from_args(args: &Args) -> Result<Self, String> where Self: Sized;
 }
 
 impl FromArgs for OptionSet {
-    fn from_args(args: &Args) -> Self {
+    fn from_args(args: &Args) -> Result<Self, String> {
 
     let mut columns: Vec<Column> = vec![];
     if let Some(k_string) = args.keys.clone() {
@@ -91,7 +92,15 @@ impl FromArgs for OptionSet {
           let mut default_val = None;
           if let Some(def_val) = sub_parts.get(2) {
             default_val = match fmt {
-              Format::Integer => Some(Value::Number(Number::from_i128(i128::from_str(&def_val).unwrap()).unwrap())),
+              Format::Integer => {
+                let parsed = i128::from_str(def_val).map_err(|_| {
+                  format!("invalid --keys entry '{}': '{}' is not a valid integer default", ck, def_val)
+                })?;
+                let num = Number::from_i128(parsed).ok_or_else(|| {
+                  format!("invalid --keys entry '{}': integer default '{}' is out of range", ck, def_val)
+                })?;
+                Some(Value::Number(num))
+              },
               Format::Boolean => {
                 if let Some(is_true) = is_truthy_core(def_val, false) {
                   Some(Value::Bool(is_true))
@@ -117,8 +126,9 @@ impl FromArgs for OptionSet {
     };
     let mut field_mode = FieldNameMode::AutoA1;
     if let Some(colstyle) = args.colstyle.clone() {
-        let (col_key, col_mode) = colstyle.to_start_end(":");
-        field_mode = FieldNameMode::from_key(&col_key, col_mode.starts_with_ci_alphanum("all"));
+        if let (Some(col_key), Some(col_mode)) = colstyle.to_start_end(":") {
+            field_mode = FieldNameMode::from_key(&col_key, col_mode.starts_with_ci_alphanum("all"));
+        }
     }
     let jsonl = args.lines || read_mode.is_async();
     let selected = if let Some(sheet) = args.sheet.clone() {
@@ -126,14 +136,14 @@ impl FromArgs for OptionSet {
     } else {
         None
     };
-    OptionSet {
+    Ok(OptionSet {
         selected,
         indices: vec![args.index],
         path: args.path.clone(),
         max: args.max,
         header_row: args.header_row,
         omit_header: args.omit_header,
-        rows: crate::RowOptionSet { 
+        rows: crate::RowOptionSet {
             decimal_comma: args.euro_number_format,
             date_only: args.date_only,
             columns,
@@ -141,6 +151,6 @@ impl FromArgs for OptionSet {
         jsonl,
         read_mode,
         field_mode
-    }
+    })
     }
 }

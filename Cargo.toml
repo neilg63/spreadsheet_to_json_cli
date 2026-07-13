@@ -5,10 +5,12 @@ edition = "2021"
 
 [dependencies]
 args = "^2.2.0"
-clap = { version = "^4.5.22", features = ["env", "derive"] }
+clap = { version = "^4.6.1", features = ["env", "derive"] }
 dotenv = { version = "^0.15.0", features = ["clap", "cli"] }
-spreadsheet-to-json = "0.1.11"
-uuid = { version = "^1.11.0", features = ["fast-rng", "v4"] }
+spreadsheet-to-json = "0.2.0"
+to_segments = "0.1.2"
+simple-string-patterns = "0.4.0"
+uuid = { version = "^1.23.5", features = ["fast-rng", "v4"] }
 
 # [patch.crates-io]
 # spreadsheet-to-json = { path = "../spreadsheet_to_json" }

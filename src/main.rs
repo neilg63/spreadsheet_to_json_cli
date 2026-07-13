@@ -1,7 +1,8 @@
 mod args;
 
 use std::fs::File;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::ExitCode;
 
 use clap::Parser;
 use args::*;
@@ -9,17 +10,29 @@ use spreadsheet_to_json::error::GenericError;
 use spreadsheet_to_json::indexmap::IndexMap;
 use spreadsheet_to_json::serde_json::Value;
 use spreadsheet_to_json::tokio::time::Instant;
-use std::io::{Error, Write};
+use std::io::Write;
 use uuid::Uuid;
 use spreadsheet_to_json::{tokio, serde_json::json};
-use spreadsheet_to_json::{process_spreadsheet_async, process_spreadsheet_immediate, OptionSet, RowOptionSet};
+use spreadsheet_to_json::{process_spreadsheet_async, process_spreadsheet_immediate, OptionSet, RowOptionSet, PathData};
 use std::fs::OpenOptions;
 
 #[tokio::main]
-async fn main() -> Result<(), Error>{
+async fn main() -> ExitCode {
   let args = Args::parse();
   let debug_mode = args.debug;
-  let opts = OptionSet::from_args(&args);
+
+  let opts = match OptionSet::from_args(&args) {
+    Ok(opts) => opts,
+    Err(msg) => {
+      eprintln!("error: {}", msg);
+      return ExitCode::from(2);
+    }
+  };
+
+  if let Err(msg) = validate_path(args.path.as_deref()) {
+    eprintln!("error: {}", msg);
+    return ExitCode::from(2);
+  }
 
   let start = if debug_mode {
     Some(Instant::now()) // Start timer here
@@ -27,7 +40,6 @@ async fn main() -> Result<(), Error>{
     None
   };
 
-  let mut rows_only = false;
   let mut lines: Option<String> = None;
   let result = if opts.is_async() {
     match start_uuid_file() {
@@ -42,27 +54,32 @@ async fn main() -> Result<(), Error>{
   } else {
     process_spreadsheet_immediate(&opts).await
   };
-  let result_lines = match result {
+  let data_set = match result {
     Err(msg) => {
-      let mut lines = vec![format!("error: {}", msg)];
-      lines.append(&mut opts.to_lines());
-      lines
+      eprintln!("error: {}", describe_error(&msg));
+      if debug_mode {
+        eprintln!("details: {}", msg);
+        for line in opts.to_lines() {
+          eprintln!("  {}", line);
+        }
+      }
+      return ExitCode::FAILURE;
     },
-    Ok(data_set) => {
-      rows_only = (args.lines && !args.preview) || args.rows;
-      if rows_only {
-          if args.lines {
-            lines = Some(data_set.rows().join("\n"));
-          } else {
-            lines = Some(build_indented_json_rows(&data_set.rows()));
-          }
-      }
-      if args.exclude_cells {
-          opts.to_lines()
+    Ok(data_set) => data_set
+  };
+
+  let rows_only = (args.lines && !args.preview) || args.rows;
+  if rows_only {
+      if args.lines {
+        lines = Some(data_set.rows().join("\n"));
       } else {
-          data_set.to_output_lines(args.lines)
+        lines = Some(build_indented_json_rows(&data_set.rows()));
       }
-    }
+  }
+  let result_lines = if args.exclude_cells {
+      opts.to_lines()
+  } else {
+      data_set.to_output_lines(args.lines)
   };
   if rows_only {
     if let Some(lines_string) = lines {
@@ -79,7 +96,51 @@ async fn main() -> Result<(), Error>{
       println!("Total processing time: {:?}", duration);
     }
   }
+  ExitCode::SUCCESS
+}
+
+/// Catch the common, easy-to-explain failure cases (missing file, wrong extension)
+/// before touching the filesystem any further, so no temp file is created and
+/// the user gets a plain-English reason instead of an internal error code.
+fn validate_path(path_opt: Option<&str>) -> Result<(), String> {
+  let Some(path_str) = path_opt else {
+    return Err("no spreadsheet file specified. Usage: spreadsheet-to-json-cli [OPTIONS] <PATH>".to_string());
+  };
+  let path = Path::new(path_str);
+  if !path.exists() {
+    return Err(format!("file not found: {}", path.display()));
+  }
+  if path.is_dir() {
+    return Err(format!("expected a file but found a directory: {}", path.display()));
+  }
+  let path_data = PathData::new(path);
+  if !path_data.is_valid() {
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("(none)");
+    return Err(format!(
+      "incompatible file format '.{}'. Supported formats: xlsx, xls, xlsb, ods, csv, tsv",
+      ext
+    ));
+  }
   Ok(())
+}
+
+/// Map the library's internal error codes to plain-English messages.
+fn describe_error(err: &GenericError) -> String {
+  match err.0 {
+    "file_unavailable" => "file not found.".to_string(),
+    "unsupported_format" => "incompatible file format. Supported formats: xlsx, xls, xlsb, ods, csv, tsv.".to_string(),
+    "no_filepath_specified" => "no spreadsheet file specified.".to_string(),
+    "workbook_with_no_sheets" => "the workbook has no readable worksheets.".to_string(),
+    "cannot_open_workbook" => "could not open the workbook; the file may be corrupt or not a valid spreadsheet.".to_string(),
+    "unreadable_csv_file" => "could not read the CSV file.".to_string(),
+    "unreadable_tsv_file" => "could not read the TSV file.".to_string(),
+    "xlsx_error" => "the Excel file appears to be corrupt or invalid.".to_string(),
+    "ods_error" => "the OpenDocument file appears to be corrupt or invalid.".to_string(),
+    "file_not_found" => "file not found.".to_string(),
+    "permission_denied" => "permission denied while accessing the file.".to_string(),
+    "io_error" => "an I/O error occurred while reading the file.".to_string(),
+    other => format!("an unexpected error occurred ({}).", other),
+  }
 }
 
 
