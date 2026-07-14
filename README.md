@@ -1,4 +1,8 @@
-# Spreadsheet to JSON CLI
+[![mirror](https://img.shields.io/badge/mirror-github-blue)](https://github.com/neilg63/spreadsheet_to_json_cli)
+[![crates.io](https://img.shields.io/crates/v/spread-cli.svg)](https://crates.io/crates/spread-cli)
+[![docs.rs](https://docs.rs/spread-cli/badge.svg)](https://docs.rs/spread-cli)
+
+# Spreadsheet to JSON CLI (spread-cli)
 
 This crate provides a simple command line interface to convert common spreadsheet and CSV files into JSON or JSONL (JSON Lines) files suitable data interchange.
 
