@@ -7,6 +7,7 @@ fn main() -> Result<(), rust_xlsxwriter::XlsxError> {
     gen_products()?;
     gen_multi_sheet()?;
     gen_date_only()?;
+    gen_wide_columns();
     Ok(())
 }
 
@@ -78,4 +79,16 @@ fn gen_date_only() -> Result<(), rust_xlsxwriter::XlsxError> {
 
     workbook.save("tests/fixtures/date_only.xlsx")?;
     Ok(())
+}
+
+/// A CSV with more than 100 columns -- exercises the c01-style padding width scaling
+/// up from 2 digits to 3 (c01..c99 under 100 columns, c001..c999 from 100 up to 1,000).
+/// Plain CSV rather than xlsx, since a wide binary workbook is unnecessary overhead
+/// just to test column-count-driven padding width.
+fn gen_wide_columns() {
+    let num_cols = 120;
+    let header = (1..=num_cols).map(|i| format!("Col {}", i)).collect::<Vec<_>>().join(",");
+    let row = (1..=num_cols).map(|i| format!("v{}", i)).collect::<Vec<_>>().join(",");
+    std::fs::write("tests/fixtures/wide_columns.csv", format!("{}\n{}\n", header, row))
+        .expect("failed to write tests/fixtures/wide_columns.csv");
 }

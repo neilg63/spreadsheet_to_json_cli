@@ -143,13 +143,13 @@ impl FromArgs for OptionSet {
             // both halves of the tuple failed and the whole block was skipped).
             let override_all = col_mode.is_none_or(|m| m.starts_with_ci_alphanum("all"));
             let colkey = col_key.strip_non_alphanum();
-            // r1c1  and r1 arre also interpreted as c1
+            // r1c1 and r1 are also interpreted as c1
             let col_key = if colkey.starts_with_ci("r1") {
                 "c1"
             } else {
                 &colkey
             };
-            field_mode = FieldNameMode::from_key(&col_key, override_all);
+            field_mode = FieldNameMode::from_key(col_key, override_all);
         }
     }
     let jsonl = args.lines || read_mode.is_async();

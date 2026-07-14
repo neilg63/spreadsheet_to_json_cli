@@ -234,6 +234,51 @@ fn colstyle_flag_bare_a1_applies_to_every_field() {
 }
 
 #[test]
+fn colstyle_flag_accepts_r1_and_r1c1_as_aliases_for_c01() {
+    // r1/R1C1-style is a common spreadsheet-programming convention for the same
+    // zero-padded column numbering as c01/c02/... -- but bare "r" (no digit) is NOT
+    // an alias; it isn't a recognised style at all and falls through to the default.
+    let path = fixture("products.xlsx");
+    let expected = serde_json::json!(["c01", "c02", "c03", "c04", "c05"]);
+
+    for style in ["r1", "R1", "r1c1", "R1C1"] {
+        let out = run(&["--json", "-m", "1", "-c", style, path.to_str().unwrap()]);
+        assert!(out.status.success());
+        let v = parse_json(&stdout(&out));
+        assert_eq!(v["column_style"], "C01 override", "style '{}' should map to C01", style);
+        assert_eq!(v["fields"], expected, "style '{}' should map to C01", style);
+    }
+
+    // bare "r" is not a recognised style -- falls through to the default (no-op)
+    let out = run(&["--json", "-m", "1", "-c", "r", path.to_str().unwrap()]);
+    assert!(out.status.success());
+    let v = parse_json(&stdout(&out));
+    assert_eq!(v["column_style"], "A1 auto");
+}
+
+#[test]
+fn colstyle_padding_width_scales_with_column_count() {
+    // Under 100 columns, c01-style padding is 2 digits (products.xlsx has 5 columns).
+    let narrow = fixture("products.xlsx");
+    let out = run(&["--json", "-m", "1", "-c", "c1", narrow.to_str().unwrap()]);
+    assert!(out.status.success());
+    let v = parse_json(&stdout(&out));
+    assert_eq!(v["fields"], serde_json::json!(["c01", "c02", "c03", "c04", "c05"]));
+
+    // 100+ columns bumps the padding to 3 digits: c001..c120, not c01..c120.
+    let wide = fixture("wide_columns.csv");
+    let out = run(&["--json", "-m", "1", "-c", "c1", wide.to_str().unwrap()]);
+    assert!(out.status.success());
+    let v = parse_json(&stdout(&out));
+    let fields = v["fields"].as_array().expect("fields should be an array");
+    assert_eq!(fields.len(), 120);
+    assert_eq!(fields[0], "c001");
+    assert_eq!(fields[8], "c009");
+    assert_eq!(fields[99], "c100");
+    assert_eq!(fields[119], "c120");
+}
+
+#[test]
 fn sheet_selection_by_name() {
     let path = fixture("multi_sheet.xlsx");
     let out = run(&["-l", "-s", "Details", path.to_str().unwrap()]);
