@@ -35,8 +35,8 @@ This is especially handy when a header is genuinely unwieldy to reference by nam
 - ```--sheet, -s``` case-insensitive sheet name ignoring spaces and punctuation
 - ```--index, -i``` sheet index (0 is the first) for spreadsheets
 - ```--euro_number_format, -e```: convert European-style decimal commas, when converting from formatted strings to numbers
-- ```--date_only``` date-times columns are processed as dates only default, unless overridden
-- ```--keys, -k```: comma-separated list of column overrides, each in the form ```source_key[:new_key][|format[|default]]```. `source_key` is matched against the column's natural (auto-detected, snake_cased) header key wherever that column actually is, so you only need to list the columns you want to change -- not pad out the ones ahead of them. A `source_key` that doesn't match any column in the file is silently ignored. Omit `:new_key` to change only the format/default and keep the natural name. A single `--keys` value can mix and match several overrides, comma-separated:
+- ```--date_only``` date-times columns are processed as dates only by default, unless overridden
+- ```--keys, -k```: comma-separated list of column overrides, each in the form ```source_key[:new_key][|format[|default]]```. `source_key` is matched against the column's natural (auto-detected, snake_cased) header key wherever that column actually is, so you only need to list the columns you want to change. A `source_key` that doesn't match any column in the file is silently ignored. Omit `:new_key` to change only the format/default and keep the natural name. A single `--keys` value can mix and match several overrides, comma-separated:
   - `--keys "start_date|date"` casts `start_date` to a date, keeping its natural name
   - `--keys "start_date:start|date"` renames `start_date` to `start` and casts it to a date
   - `--keys "start_date:start|date,total_price:total"` does both of the above, and renames `total_price` to `total` with no format change
@@ -55,7 +55,7 @@ This is especially handy when a header is genuinely unwieldy to reference by nam
 
 `--json` is a *formatting* flag, not a mode switch: it makes JSON output properly indented and multi-line, without changing which content gets printed. What gets printed is still decided by `--rows`/`--lines` (or neither) exactly as without `--json`:
 
-- neither `-r` nor `-l`: the full result -- parsing metadata plus the data, nested under `"data"`
+- neither `-r` nor `-l`: the full result, parsing metadata plus the data, nested under `"data"`
 - `-r` (rows only): just the data rows, as a JSON array
 - `-l` (lines): one compact JSON object per row (JSONL/NDJSON) -- `--json` has no effect here, since one-record-per-line is a different structural format, not an indentation style
 
