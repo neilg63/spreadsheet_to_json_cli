@@ -311,6 +311,32 @@ fn preview_mode_lists_every_sheet() {
     assert!(text.contains("multimode: true"), "got: {}", text);
 }
 
+#[test]
+fn preview_with_rows_only_does_not_drop_any_sheet() {
+    // Regression: -p -r (and -p -r --json) used to silently return only the *first*
+    // sheet's rows -- data_set.rows()/to_vec() only ever look at the first sheet, which
+    // is correct for single-sheet results but silently dropped every other sheet in a
+    // --preview (multimode) result.
+    let path = fixture("multi_sheet.xlsx");
+
+    let out = run(&["-p", "-r", "--json", path.to_str().unwrap()]);
+    assert!(out.status.success());
+    let v = parse_json(&stdout(&out));
+    let blocks = v.as_array().expect("top-level value should be an array of per-sheet blocks");
+    assert_eq!(blocks.len(), 2, "both sheets should be present, got: {}", v);
+    assert_eq!(blocks[0]["sheet"], "Summary");
+    assert_eq!(blocks[0]["rows"][0]["region"], "North");
+    assert_eq!(blocks[1]["sheet"], "Details");
+    assert_eq!(blocks[1]["rows"][0]["note"], "first");
+
+    // same fix applies without --json (plain -p -r)
+    let out = run(&["-p", "-r", path.to_str().unwrap()]);
+    assert!(out.status.success());
+    let text = stdout(&out);
+    assert!(text.contains("\"sheet\":\"Summary\""), "got: {}", text);
+    assert!(text.contains("\"sheet\":\"Details\""), "got: {}", text);
+}
+
 // --- real-world sample files (from the spreadsheet_to_json library's own test data) ---
 
 #[test]

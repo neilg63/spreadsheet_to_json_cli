@@ -110,7 +110,20 @@ async fn main() -> ExitCode {
   // that, exactly as without --json.
   let rows_only = (args.lines && !args.preview) || args.rows;
   if rows_only && !opts.is_async() {
-      if args.lines {
+      if opts.multimode() {
+        // data_set.rows()/to_vec() only ever return the *first* sheet -- with multiple
+        // sheets (--preview) that would silently drop every sheet after it, so rows-only
+        // mode needs the same per-sheet blocks the full --json object already uses.
+        let blocks = multimode_sheet_blocks(&data_set);
+        if args.lines {
+          lines = Some(blocks.iter().map(|b| b.to_string()).collect::<Vec<_>>().join("\n"));
+        } else if args.json {
+          lines = Some(to_string_pretty(&blocks).unwrap());
+        } else {
+          let compact: Vec<String> = blocks.iter().map(|b| b.to_string()).collect();
+          lines = Some(build_indented_json_rows(&compact));
+        }
+      } else if args.lines {
         // JSONL is inherently one compact object per line; --json doesn't apply here.
         lines = Some(data_set.rows().join("\n"));
       } else if args.json {
@@ -215,6 +228,20 @@ fn print_error(json_mode: bool, msg: &str) {
   }
 }
 
+/// One JSON block per sheet: {"sheet", "row_count", "fields", "rows"}. Used both by the
+/// full --json object's "data" field and directly by the rows-only (-r/-l) path when
+/// --preview is active -- multimode results have no single flat row list to hand back
+/// (data_set.rows()/to_vec() only ever return the *first* sheet's rows), so rows-only
+/// mode needs this same per-sheet shape rather than silently dropping every other sheet.
+fn multimode_sheet_blocks(result: &ResultSet) -> Vec<Value> {
+  result.data.sheets().iter().map(|sheet| json!({
+    "sheet": sheet.name(),
+    "row_count": sheet.num_rows,
+    "fields": sheet.keys,
+    "rows": sheet.rows
+  })).collect()
+}
+
 /// Builds the single structured JSON object emitted by --json, covering every
 /// query mode (single sheet, multi-sheet preview, CSV/TSV, deferred).
 fn build_json_result(result: &ResultSet, opts: &OptionSet) -> Value {
@@ -250,13 +277,7 @@ fn build_json_result(result: &ResultSet, opts: &OptionSet) -> Value {
   }
 
   let data = if result.multimode() {
-    let sheets: Vec<Value> = result.data.sheets().iter().map(|sheet| json!({
-      "sheet": sheet.name(),
-      "row_count": sheet.num_rows,
-      "fields": sheet.keys,
-      "rows": sheet.rows
-    })).collect();
-    json!(sheets)
+    json!(multimode_sheet_blocks(result))
   } else {
     json!(result.to_vec())
   };
