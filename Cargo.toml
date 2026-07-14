@@ -1,6 +1,6 @@
 [package]
 name = "spread-cli"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Converts spreadsheets and CSV files to a friendly JSON format with many field name and data-type options."
 repository = "https://github.com/neilg63/spreadsheet_to_json_cli"
