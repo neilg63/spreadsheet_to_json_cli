@@ -413,7 +413,7 @@ fn launch_background_export(args: &Args) -> Result<String, GenericError> {
   Ok(export_path)
 }
 
-/// The current invocation's own arguments (skipping argv[0]), with any --output/-o and its
+/// The current invocation's own arguments (skipping `argv[0]`), with any --output/-o and its
 /// value removed. Doesn't attempt to handle -f bundled into a multi-short-flag group
 /// (e.g. "-ro value") -- pass --output/-o as its own token.
 #[cfg(unix)]
