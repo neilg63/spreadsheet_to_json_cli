@@ -16,6 +16,8 @@ use spreadsheet_to_json::{tokio, serde_json::json};
 use spreadsheet_to_json::{process_spreadsheet_async, process_spreadsheet_immediate, OptionSet, RowOptionSet, PathData, ResultSet};
 use std::fs::OpenOptions;
 
+type RowCallback = Box<dyn Fn(IndexMap<String, Value>) -> Result<(), GenericError> + Send + Sync>;
+
 #[tokio::main]
 async fn main() -> ExitCode {
   let args = Args::parse();
@@ -44,7 +46,7 @@ async fn main() -> ExitCode {
   let result = if opts.is_async() {
     match start_uuid_file() {
         Ok((pb, file_ref)) => {
-            let callback: Box<dyn Fn(IndexMap<String, Value>) -> Result<(), GenericError> + Send + Sync> = Box::new(move |row: IndexMap<String, Value>| {
+            let callback: RowCallback = Box::new(move |row: IndexMap<String, Value>| {
                 append_line_to_file(&pb, &json!(row).to_string())
             });
             process_spreadsheet_async(&opts, callback, Some(&file_ref)).await
@@ -161,11 +163,10 @@ fn build_json_result(result: &ResultSet, opts: &OptionSet) -> Value {
   out.insert("row_count".to_string(), json!(result.num_rows));
   out.insert("fields".to_string(), json!(result.keys));
   out.insert("multimode".to_string(), json!(result.multimode()));
-  if is_workbook {
-    if result.selected.is_some() {
+  if is_workbook
+    && result.selected.is_some() {
       out.insert("sheet_indices".to_string(), json!(opts.indices.first().copied().unwrap_or(0)));
     }
-  }
   out.insert("file name".to_string(), json!(result.filename));
   out.insert("max_rows".to_string(), json!(opts.max_rows()));
   out.insert("mode".to_string(), json!(opts.row_mode()));
@@ -214,7 +215,7 @@ fn describe_error(err: &GenericError) -> String {
 
 
 pub fn build_indented_json_rows(rows: &[String]) -> String {
-  format!("[\n\t{}\n]", &rows.join(",\n\t"))
+  format!("[\n\t{}\n]", rows.join(",\n\t"))
 }
 
 /// Create a new file with a random UUID and return a result with PathBuf + UUID String

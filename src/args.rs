@@ -89,23 +89,23 @@ impl FromArgs for OptionSet {
         // empty segments (e.g. "weight_kg||0" would lose the empty format slot entirely),
         // which would silently misalign the default onto the wrong field.
         let pipe_parts = ck.to_parts("|");
-        let key_part = pipe_parts.get(0).cloned().unwrap_or_default();
+        let key_part = pipe_parts.first().cloned().unwrap_or_default();
         let key_sub_parts = key_part.to_parts(":");
-        let source_key = key_sub_parts.get(0)
+        let source_key = key_sub_parts.first()
           .map(|s| s.to_snake_case())
-          .filter(|s| s.len() > 0);
+          .filter(|s| !s.is_empty());
         let Some(source_key) = source_key else {
           continue;
         };
         let new_key = key_sub_parts.get(1)
           .map(|s| s.trim())
-          .filter(|s| s.len() > 0)
+          .filter(|s| !s.is_empty())
           .map(|s| s.to_snake_case());
         let fmt = pipe_parts.get(1)
           .map(|s| Format::from_str(s).unwrap_or(Format::Auto))
           .unwrap_or(Format::Auto);
         let mut default_val = None;
-        if let Some(def_val) = pipe_parts.get(2).filter(|s| s.len() > 0) {
+        if let Some(def_val) = pipe_parts.get(2).filter(|s| !s.is_empty()) {
           default_val = match fmt {
             Format::Integer => {
               let parsed = i128::from_str(def_val).map_err(|_| {
@@ -117,11 +117,7 @@ impl FromArgs for OptionSet {
               Some(Value::Number(num))
             },
             Format::Boolean => {
-              if let Some(is_true) = is_truthy_core(def_val, false) {
-                Some(Value::Bool(is_true))
-              } else {
-                None
-              }
+              is_truthy_core(def_val, false).map(Value::Bool)
             },
             _ => Some(Value::String(def_val.clone()))
           };
@@ -145,16 +141,12 @@ impl FromArgs for OptionSet {
             // same as an explicit "-c c01:all" -- not "leave the default A1-auto style
             // in place", which is what a bare value used to do (silently, since matching
             // both halves of the tuple failed and the whole block was skipped).
-            let override_all = col_mode.map_or(true, |m| m.starts_with_ci_alphanum("all"));
-            field_mode = FieldNameMode::from_key(&col_key, override_all);
+            let override_all = col_mode.is_none_or(|m| m.starts_with_ci_alphanum("all"));
+            field_mode = FieldNameMode::from_key(col_key, override_all);
         }
     }
     let jsonl = args.lines || read_mode.is_async();
-    let selected = if let Some(sheet) = args.sheet.clone() {
-        Some(sheet.to_segments(","))
-    } else {
-        None
-    };
+    let selected = args.sheet.clone().map(|sheet| sheet.to_segments(","));
     let max = if args.preview {
         Some(DEFAULT_MAX_FOR_PREVIEW)
     } else {
@@ -164,7 +156,7 @@ impl FromArgs for OptionSet {
         selected,
         indices: vec![args.index],
         path: args.path.clone(),
-        max: max,
+        max,
         header_row: args.header_row,
         omit_header: args.omit_header,
         rows: crate::RowOptionSet {
