@@ -3,6 +3,8 @@ mod args;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+#[cfg(unix)]
+use std::process::{Command, Stdio};
 
 use clap::Parser;
 use args::*;
@@ -36,6 +38,39 @@ async fn main() -> ExitCode {
     return ExitCode::from(2);
   }
 
+  // --deferred: on Unix, hand the actual export off to a detached background process and
+  // return immediately, rather than blocking here until it finishes (see
+  // launch_background_export for why this is Unix-only). We still validate the path and
+  // options synchronously above first, so obvious mistakes (bad file, bad --keys) are
+  // still reported directly in the foreground rather than silently failing in the
+  // background. args.background_worker is only ever set by that spawn below -- it marks
+  // "this invocation IS the worker", so it falls through to do the real work instead of
+  // spawning yet another one. On non-Unix (or for the worker itself), this falls through
+  // to the same in-process, streamed-but-blocking handling --deferred has always had.
+  if opts.is_async() && !args.background_worker {
+    if let Some(launch_result) = try_launch_background_export(&args) {
+      return match launch_result {
+        Ok(export_path) => {
+          let log_path = format!("{}.log", export_path);
+          if args.json {
+            println!("{}", to_string_pretty(&json!({
+              "output_reference": export_path,
+              "log_file": log_path,
+              "background": true
+            })).unwrap());
+          } else {
+            println!("exporting to {} in the background (see {} for progress and errors)", export_path, log_path);
+          }
+          ExitCode::SUCCESS
+        },
+        Err(msg) => {
+          print_error(args.json, &describe_error(&msg));
+          ExitCode::FAILURE
+        }
+      };
+    }
+  }
+
   let start = if debug_mode {
     Some(Instant::now()) // Start timer here
   } else {
@@ -44,7 +79,7 @@ async fn main() -> ExitCode {
 
   let mut lines: Option<String> = None;
   let result = if opts.is_async() {
-    match start_uuid_file() {
+    match resolve_export_file(args.output.as_deref()) {
         Ok((pb, file_ref)) => {
             let callback: RowCallback = Box::new(move |row: IndexMap<String, Value>| {
                 append_line_to_file(&pb, &json!(row).to_string())
@@ -74,7 +109,7 @@ async fn main() -> ExitCode {
   // pick which content is printed. -r/-l/--exclude-cells (or none of them) still decide
   // that, exactly as without --json.
   let rows_only = (args.lines && !args.preview) || args.rows;
-  if rows_only {
+  if rows_only && !opts.is_async() {
       if args.lines {
         // JSONL is inherently one compact object per line; --json doesn't apply here.
         lines = Some(data_set.rows().join("\n"));
@@ -85,11 +120,32 @@ async fn main() -> ExitCode {
       }
   }
   if rows_only {
-    if let Some(lines_string) = lines {
+    if opts.is_async() {
+      // --deferred streams rows straight to a file rather than capturing them, so
+      // there's no row data to show here -- tell the user where it went instead of
+      // printing an empty line (or, with --json, an empty array).
+      if let Some(out_ref) = data_set.out_ref.clone() {
+        if args.json {
+          println!("{}", to_string_pretty(&json!({ "output_reference": out_ref })).unwrap());
+        } else {
+          println!("exporting to {}", out_ref);
+        }
+      }
+    } else if let Some(lines_string) = lines {
       println!("{}", lines_string);
     }
+    // Rows-only output is a bare array (or JSONL stream) -- there's no clean place to
+    // embed debug metadata inline without breaking that contract, so timing always goes
+    // to stderr here, never stdout (keeping stdout safe to pipe into jq/NDJSON tools).
+    print_debug_timing(debug_mode, start, true);
   } else if args.json {
-    println!("{}", to_string_pretty(&build_json_result(&data_set, &opts)).unwrap());
+    let mut json_result = build_json_result(&data_set, &opts);
+    if debug_mode {
+      if let Some(start_timer) = start {
+        json_result["processing_time_ms"] = json!(start_timer.elapsed().as_secs_f64() * 1000.0);
+      }
+    }
+    println!("{}", to_string_pretty(&json_result).unwrap());
   } else {
     let result_lines = if args.exclude_cells {
         opts.to_lines()
@@ -99,14 +155,29 @@ async fn main() -> ExitCode {
     for line in result_lines {
       println!("{}", line);
     }
-  }
-  if debug_mode {
-    if let Some(start_timer) = start {
-      let duration = start_timer.elapsed(); // Stop timer here
-      println!("Total processing time: {:?}", duration);
-    }
+    print_debug_timing(debug_mode, start, false);
   }
   ExitCode::SUCCESS
+}
+
+/// Prints the --debug processing-time line, if timing was started. JSON-producing modes
+/// (rows-only, or the plain-text fallback) always send it to stderr so it can never
+/// corrupt stdout for a jq/NDJSON consumer -- the full --json object mode embeds the
+/// timing as a real field instead (see the `processing_time_ms` insert above) rather
+/// than calling this at all.
+fn print_debug_timing(debug_mode: bool, start: Option<Instant>, to_stderr: bool) {
+  if !debug_mode {
+    return;
+  }
+  let Some(start_timer) = start else {
+    return;
+  };
+  let duration = start_timer.elapsed();
+  if to_stderr {
+    eprintln!("Total processing time: {:?}", duration);
+  } else {
+    println!("Total processing time: {:?}", duration);
+  }
 }
 
 /// Catch the common, easy-to-explain failure cases (missing file, wrong extension)
@@ -209,6 +280,9 @@ fn describe_error(err: &GenericError) -> String {
     "file_not_found" => "file not found.".to_string(),
     "permission_denied" => "permission denied while accessing the file.".to_string(),
     "io_error" => "an I/O error occurred while reading the file.".to_string(),
+    "write_error" => "could not create the export file. Check the path and permissions.".to_string(),
+    "exec_path_error" => "could not determine this program's own executable path, needed to launch the background export worker.".to_string(),
+    "spawn_error" => "could not launch the background export worker process.".to_string(),
     other => format!("an unexpected error occurred ({}).", other),
   }
 }
@@ -218,21 +292,128 @@ pub fn build_indented_json_rows(rows: &[String]) -> String {
   format!("[\n\t{}\n]", rows.join(",\n\t"))
 }
 
-/// Create a new file with a random UUID and return a result with PathBuf + UUID String
-pub fn start_uuid_file() -> Result<(PathBuf, String), GenericError> {
-  let file_directory = dotenv::var("EXPORT_FILE_DIRECTORY").unwrap_or_else(|_| "./".to_string());
-  let mut dir_path = PathBuf::from(file_directory);
+/// Resolves the file a --deferred export should be written to, and creates it (empty)
+/// ready for streaming writes. If `explicit_path` (--output) is given, it's used exactly
+/// as provided; otherwise falls back to a random-UUID .jsonl filename under
+/// EXPORT_FILE_DIRECTORY (default "./"), as before. Returns the path used both as a
+/// PathBuf (for writing) and as a displayable string (for the "exporting to ..." message
+/// and the `output_reference`/`output reference` metadata).
+pub fn resolve_export_file(explicit_path: Option<&str>) -> Result<(PathBuf, String), GenericError> {
+  let dir_path = if let Some(explicit) = explicit_path {
+    PathBuf::from(explicit)
+  } else {
+    let file_directory = dotenv::var("EXPORT_FILE_DIRECTORY").unwrap_or_else(|_| "./".to_string());
+    let mut dir_path = PathBuf::from(file_directory);
+    dir_path.push(format!("{}.jsonl", Uuid::new_v4()));
+    dir_path
+  };
 
-  std::fs::create_dir_all(&dir_path)?;
-
-  let uuid = Uuid::new_v4();
-  let filename = format!("{}.jsonl", uuid);
-  dir_path.push(&filename);
+  if let Some(parent) = dir_path.parent() {
+    if !parent.as_os_str().is_empty() {
+      std::fs::create_dir_all(parent)?;
+    }
+  }
 
   if let Ok(mut file) = File::create(&dir_path) {
     file.write_all(b"").map_err(|_| GenericError("write_error"))?;
+  } else {
+    return Err(GenericError("write_error"));
   }
-  Ok((dir_path, filename))
+
+  let display_path = dir_path.to_string_lossy().to_string();
+  Ok((dir_path, display_path))
+}
+
+/// Tries to launch a detached background export (see launch_background_export);
+/// `None` means the caller should fall back to the ordinary in-process, streamed-but-
+/// blocking --deferred handling this crate has always had.
+///
+/// Unix-only by design, not just by omission: this is primarily a server-side tool
+/// (Linux/Mac deployment), true background detachment is the thing actually worth
+/// having there for million-row imports, and Windows' equivalent (CREATE_NEW_PROCESS_GROUP
+/// | DETACHED_PROCESS) is a meaningfully different, untested code path not worth carrying
+/// for a platform this tool isn't really aimed at. Falling back to the existing blocking
+/// (but still memory-streamed) behavior on Windows is strictly safe -- it's exactly what
+/// --deferred already did everywhere before background detachment existed.
+#[cfg(unix)]
+fn try_launch_background_export(args: &Args) -> Option<Result<String, GenericError>> {
+  Some(launch_background_export(args))
+}
+
+#[cfg(not(unix))]
+fn try_launch_background_export(_args: &Args) -> Option<Result<String, GenericError>> {
+  None
+}
+
+/// Spawns a detached copy of this same binary to perform the actual --deferred export,
+/// and returns immediately without waiting for it -- the caller can hand control back to
+/// the shell right away while the export continues after this process exits.
+///
+/// The export file is resolved and created *here*, in the foreground process, both so the
+/// path can be reported back immediately and so the worker doesn't independently generate
+/// a different random UUID filename than the one just announced. The worker is re-invoked
+/// with every original argument plus an explicit `--output <resolved path>` (pinning it to
+/// that exact file) and the internal `--background-worker` flag.
+///
+/// The worker's stdout/stderr are redirected to a `<export path>.log` file, since once
+/// detached there's no terminal left to report progress or errors to directly -- that log
+/// is the only way to find out afterward whether it actually succeeded.
+///
+/// Detachment via a new process group (stable since Rust 1.64 via
+/// `std::os::unix::process::CommandExt::process_group`) keeps the worker from being tied
+/// to this process's console/job, so it keeps running after this process exits and won't
+/// receive a Ctrl+C sent to this one.
+#[cfg(unix)]
+fn launch_background_export(args: &Args) -> Result<String, GenericError> {
+  use std::os::unix::process::CommandExt;
+
+  let (_, export_path) = resolve_export_file(args.output.as_deref())?;
+
+  let exe = std::env::current_exe().map_err(|_| GenericError("exec_path_error"))?;
+  let mut cmd = Command::new(exe);
+  // Forward the original invocation's own arguments, but strip out any pre-existing
+  // --output/-o (and its value) first -- clap rejects the same non-repeatable argument
+  // being passed twice, and we're about to append our own resolved --output below.
+  for arg in args_without_output_flag() {
+    cmd.arg(arg);
+  }
+  cmd.arg("--output").arg(&export_path);
+  cmd.arg("--background-worker");
+
+  let log_path = format!("{}.log", export_path);
+  let log_out = File::create(&log_path).map_err(|_| GenericError("write_error"))?;
+  let log_err = log_out.try_clone().map_err(|_| GenericError("write_error"))?;
+  cmd.stdin(Stdio::null());
+  cmd.stdout(Stdio::from(log_out));
+  cmd.stderr(Stdio::from(log_err));
+  cmd.process_group(0);
+
+  cmd.spawn().map_err(|_| GenericError("spawn_error"))?;
+  Ok(export_path)
+}
+
+/// The current invocation's own arguments (skipping argv[0]), with any --output/-o and its
+/// value removed. Doesn't attempt to handle -f bundled into a multi-short-flag group
+/// (e.g. "-ro value") -- pass --output/-o as its own token.
+#[cfg(unix)]
+fn args_without_output_flag() -> Vec<String> {
+  let mut out = Vec::new();
+  let mut skip_next = false;
+  for arg in std::env::args().skip(1) {
+    if skip_next {
+      skip_next = false;
+      continue;
+    }
+    if arg == "--output" || arg == "-o" {
+      skip_next = true;
+      continue;
+    }
+    if arg.starts_with("--output=") || arg.starts_with("-o=") {
+      continue;
+    }
+    out.push(arg);
+  }
+  out
 }
 
 /// Called in a closure

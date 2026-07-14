@@ -38,8 +38,8 @@ pub struct Args {
   #[clap(short = 't', long, value_parser, default_value_t = 0) ]
   pub header_row: u8,
 
-  #[clap(short = 'o',long, value_parser, default_value_t = false) ]
-  pub omit_header: bool,
+  #[clap(long, value_parser, default_value_t = false) ]
+  pub omit_header: bool, // no short flag: -o is --output's
 
   #[clap(short = 'x',long, value_parser, default_value_t = false) ]
   pub exclude_cells: bool, // test validity only and show options
@@ -64,6 +64,15 @@ pub struct Args {
 
   #[clap(short = 'j', long, value_parser, default_value_t = false) ]
   pub json: bool, // single structured JSON object covering every query mode, for piping to jq
+
+  #[clap(short = 'o', long, value_parser) ]
+  pub output: Option<String>, // export file path for --deferred; overrides the random UUID filename
+
+  // Internal: set when this invocation IS the detached background worker spawned by a
+  // user-facing --deferred run, so it knows to do the actual (blocking, from its own
+  // point of view) export work instead of spawning yet another worker. Not for direct use.
+  #[clap(long, hide = true, default_value_t = false)]
+  pub background_worker: bool,
 
 }
 

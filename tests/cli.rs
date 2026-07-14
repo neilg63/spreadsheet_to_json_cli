@@ -504,6 +504,140 @@ fn json_mode_combined_with_rows_prints_only_rows_pretty_printed() {
 }
 
 #[test]
+fn debug_flag_does_not_corrupt_json_output() {
+    // Regression: --debug used to always print "Total processing time: ..." as a plain
+    // text line on stdout, which broke any JSON output it was combined with -- a jq
+    // consumer would choke on the trailing non-JSON line. --debug must never write to
+    // stdout when the output is JSON.
+    let path = fixture("products.xlsx");
+
+    // full --json object: stdout must still parse as one JSON value, with timing
+    // embedded as a real, queryable field rather than appended as text.
+    let out = run(&["--debug", "--json", "-m", "1", path.to_str().unwrap()]);
+    assert!(out.status.success());
+    let v = parse_json(&stdout(&out));
+    assert!(v["processing_time_ms"].is_number(), "got: {}", v);
+    assert!(stderr(&out).is_empty(), "timing should not also go to stderr here, got: {}", stderr(&out));
+
+    // -r --json: stdout must still parse as a bare array; timing goes to stderr instead.
+    let out = run(&["--debug", "-r", "--json", "-m", "1", path.to_str().unwrap()]);
+    assert!(out.status.success());
+    let v = parse_json(&stdout(&out));
+    assert!(v.is_array(), "got: {}", v);
+    assert!(stderr(&out).contains("Total processing time"), "got: {}", stderr(&out));
+
+    // -l (JSONL): every stdout line must still parse as JSON; timing goes to stderr.
+    let out = run(&["--debug", "-l", "-m", "1", path.to_str().unwrap()]);
+    assert!(out.status.success());
+    for line in stdout(&out).lines() {
+        parse_json(line);
+    }
+    assert!(stderr(&out).contains("Total processing time"), "got: {}", stderr(&out));
+}
+
+/// --deferred now hands off to a detached background worker and returns immediately (see
+/// launch_background_export in main.rs), so the export file may still be empty/partial
+/// right when the command returns. Polls briefly for the expected content to land.
+fn wait_for_file_lines(path: &std::path::Path, expected_lines: usize) -> String {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        if let Ok(content) = std::fs::read_to_string(path) {
+            if content.lines().count() >= expected_lines {
+                return content;
+            }
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for {} to have {} lines",
+            path.display(),
+            expected_lines
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
+#[test]
+fn deferred_flag_returns_immediately_and_streams_in_the_background() {
+    let path = fixture("products.csv");
+    let export_path = std::env::temp_dir().join("spread_cli_test_deferred_custom.jsonl");
+    let log_path = std::env::temp_dir().join("spread_cli_test_deferred_custom.jsonl.log");
+    let _ = std::fs::remove_file(&export_path);
+    let _ = std::fs::remove_file(&log_path);
+
+    let out = run(&[
+        "-r", "-l", "-d",
+        "--output", export_path.to_str().unwrap(),
+        path.to_str().unwrap(),
+    ]);
+    assert!(out.status.success());
+
+    // no row data on stdout in deferred mode -- just a message pointing at the file,
+    // returned by the foreground process before the background worker has necessarily
+    // finished (or even started) writing.
+    assert!(
+        stdout(&out).contains(&format!("exporting to {}", export_path.display())),
+        "got: {}",
+        stdout(&out)
+    );
+
+    let written = wait_for_file_lines(&export_path, 3);
+    let rows: Vec<serde_json::Value> = written.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+    assert_eq!(rows.len(), 3);
+    assert_eq!(rows[0]["sku"], "SKU101");
+
+    let _ = std::fs::remove_file(&export_path);
+    let _ = std::fs::remove_file(&log_path);
+}
+
+#[test]
+fn deferred_flag_creates_parent_directories_for_custom_file_path() {
+    let path = fixture("products.csv");
+    let export_dir = std::env::temp_dir().join("spread_cli_test_nested_export_dir");
+    let export_path = export_dir.join("sub").join("out.jsonl");
+    let _ = std::fs::remove_dir_all(&export_dir);
+
+    let out = run(&["-r", "-l", "-d", "--output", export_path.to_str().unwrap(), path.to_str().unwrap()]);
+    assert!(out.status.success());
+    // the export file is created synchronously in the foreground before the background
+    // worker is even spawned, so this is guaranteed to exist immediately -- no need to wait.
+    assert!(export_path.exists(), "expected {} to have been created", export_path.display());
+
+    let _ = std::fs::remove_dir_all(&export_dir);
+}
+
+#[test]
+fn deferred_flag_with_json_reports_backgrounded_export_as_valid_json() {
+    let path = fixture("products.csv");
+    let export_path = std::env::temp_dir().join("spread_cli_test_deferred_json.jsonl");
+    let log_path = std::env::temp_dir().join("spread_cli_test_deferred_json.jsonl.log");
+    let _ = std::fs::remove_file(&export_path);
+    let _ = std::fs::remove_file(&log_path);
+
+    // full --json object: reports the background hand-off itself, not the export's
+    // eventual row data (which isn't necessarily written yet).
+    let out = run(&["--json", "-d", "--output", export_path.to_str().unwrap(), path.to_str().unwrap()]);
+    assert!(out.status.success());
+    let v = parse_json(&stdout(&out));
+    assert_eq!(v["output_reference"], export_path.to_str().unwrap());
+    assert_eq!(v["log_file"], format!("{}.log", export_path.display()));
+    assert_eq!(v["background"], true);
+
+    wait_for_file_lines(&export_path, 3);
+    let _ = std::fs::remove_file(&export_path);
+    let _ = std::fs::remove_file(&log_path);
+
+    // -rj (bundled -r --json) + deferred: stdout must still be a single valid JSON value
+    let out = run(&["-rj", "-d", "--output", export_path.to_str().unwrap(), path.to_str().unwrap()]);
+    assert!(out.status.success());
+    let v = parse_json(&stdout(&out));
+    assert_eq!(v["output_reference"], export_path.to_str().unwrap());
+
+    wait_for_file_lines(&export_path, 3);
+    let _ = std::fs::remove_file(&export_path);
+    let _ = std::fs::remove_file(&log_path);
+}
+
+#[test]
 fn json_mode_reports_errors_as_json_on_stderr() {
     let out = run(&["--json", "./does-not-exist.xlsx"]);
     assert_eq!(out.status.code(), Some(2));
