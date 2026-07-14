@@ -480,6 +480,8 @@ dependencies = [
 [[package]]
 name = "is-truthy"
 version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c201dc134cbdbb0c53814b2508185ea1396099765d8c52f104c91e10d6c6fc63"
 dependencies = [
  "simple-string-patterns 0.4.0",
 ]
@@ -799,7 +801,9 @@ dependencies = [
 
 [[package]]
 name = "spreadsheet-to-json"
-version = "0.2.1"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "31864b98a2b53868489f82959dd7d5e619349c03243ab222c022995b8076a13e"
 dependencies = [
  "alphanumeric",
  "calamine",

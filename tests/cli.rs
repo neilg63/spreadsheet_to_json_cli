@@ -190,6 +190,50 @@ fn keys_flag_unmatched_source_key_is_silently_ignored() {
 }
 
 #[test]
+fn keys_flag_compound_entries_mix_rename_and_format_only() {
+    // A single --keys value can mix "source_key:new_key|format" entries with plain
+    // "source_key:new_key" (rename only, no format) entries in the same comma list.
+    let path = fixture("products.xlsx");
+    let out = run(&["-r", "-l", "-k", "qty:quantity|integer,sku:code", path.to_str().unwrap()]);
+    assert!(out.status.success());
+    let rows = parse_jsonl_rows(&stdout(&out));
+    assert_eq!(rows[0]["code"], "SKU001");
+    assert_eq!(rows[0]["quantity"], 100);
+    assert!(rows[0].get("sku").is_none());
+    assert!(rows[0].get("qty").is_none());
+    // untouched column keeps its natural name
+    assert_eq!(rows[0]["price"], 9.99);
+}
+
+#[test]
+fn colstyle_flag_bare_value_applies_to_every_field() {
+    // "-c c01" (no ":all" suffix) should behave the same as "-c c01:all" -- it used to be
+    // a silent no-op, since matching required both a key AND an explicit mode after ":".
+    let path = fixture("products.xlsx");
+    let bare = run(&["--json", "-m", "1", "-c", "c01", path.to_str().unwrap()]);
+    assert!(bare.status.success());
+    let bare_json = parse_json(&stdout(&bare));
+
+    let explicit = run(&["--json", "-m", "1", "-c", "c01:all", path.to_str().unwrap()]);
+    assert!(explicit.status.success());
+    let explicit_json = parse_json(&stdout(&explicit));
+
+    assert_eq!(bare_json["fields"], explicit_json["fields"]);
+    assert_eq!(bare_json["column_style"], "C01 override");
+    assert_eq!(bare_json["fields"], serde_json::json!(["c01", "c02", "c03", "c04", "c05"]));
+}
+
+#[test]
+fn colstyle_flag_bare_a1_applies_to_every_field() {
+    let path = fixture("products.xlsx");
+    let out = run(&["--json", "-m", "1", "-c", "a1", path.to_str().unwrap()]);
+    assert!(out.status.success());
+    let v = parse_json(&stdout(&out));
+    assert_eq!(v["column_style"], "A1 override");
+    assert_eq!(v["fields"], serde_json::json!(["a", "b", "c", "d", "e"]));
+}
+
+#[test]
 fn sheet_selection_by_name() {
     let path = fixture("multi_sheet.xlsx");
     let out = run(&["-r", "-l", "-s", "Details", path.to_str().unwrap()]);
@@ -237,6 +281,59 @@ fn real_world_xlsx_parses_all_data_rows() {
     assert_eq!(rows[0]["country"], "United States");
     assert_eq!(rows[399]["id"], 400.0);
     assert_eq!(rows[399]["last_name"], "Lafollette");
+}
+
+#[test]
+fn keys_flag_casts_native_datetime_column_to_date_only() {
+    // Regression: a per-column Format::Date override used to be silently ignored for
+    // real (non-string) datetime cells -- only the row-wide --date-only flag was ever
+    // consulted -- so casting a single datetime column to date-only had no effect at all.
+    let path = fixture("sample-data-1.xlsx");
+    let out = run(&["-r", "-l", "-k", "start_time|date", path.to_str().unwrap()]);
+    assert!(out.status.success());
+    let rows = parse_jsonl_rows(&stdout(&out));
+    // exactly 400 data rows -- no leaked header row (see next test) and no dropped rows
+    assert_eq!(rows.len(), 400);
+    assert_eq!(rows[0]["start_time"], "2023-06-15");
+    // other columns are untouched
+    assert_eq!(rows[0]["first_name"], "Dulce");
+}
+
+#[test]
+fn keys_flag_with_format_override_does_not_leak_header_row() {
+    // Regression: applying any non-Auto Format via --keys used to corrupt the header-row
+    // de-duplication check on xlsx/ods files, because it compared the header row's own
+    // text *after* running it through that format (e.g. a date parse turns "start_time"
+    // into null), which no longer matched the literal header text -- so the header row
+    // was wrongly kept as a bogus extra data row.
+    let path = fixture("sample-data-1.xlsx");
+    let out = run(&["-r", "-l", "-k", "start_time|date", path.to_str().unwrap()]);
+    assert!(out.status.success());
+    let rows = parse_jsonl_rows(&stdout(&out));
+    assert_eq!(rows.len(), 400);
+    // the bogus leaked row looked like {"id": "id", "first_name": "First name", ...}
+    assert_ne!(rows[0]["id"], "id");
+    assert_eq!(rows[0]["id"], 1.0);
+}
+
+#[test]
+fn keys_flag_casts_genuine_excel_date_cell_to_date_only() {
+    // A cell Excel itself formats as a plain "Date" (custom number format "yyyy-mm-dd",
+    // no time shown) is still stored internally as the same datetime serial value as any
+    // full datetime cell, with an all-zero time component -- Excel/calamine don't expose
+    // a way to tell "this cell's format is date-only" apart from "this cell just happens
+    // to be exactly midnight", so by default it renders with the full ISO datetime
+    // (including the meaningless T00:00:00.000Z). --keys "field|date" is the fix.
+    let path = fixture("date_only.xlsx");
+    let default_out = run(&["-r", "-l", path.to_str().unwrap()]);
+    assert!(default_out.status.success());
+    let default_rows = parse_jsonl_rows(&stdout(&default_out));
+    assert_eq!(default_rows[0]["occurred_on"], "2023-09-08T00:00:00.000Z");
+
+    let cast_out = run(&["-r", "-l", "-k", "occurred_on|date", path.to_str().unwrap()]);
+    assert!(cast_out.status.success());
+    let cast_rows = parse_jsonl_rows(&stdout(&cast_out));
+    assert_eq!(cast_rows[0]["occurred_on"], "2023-09-08");
 }
 
 #[test]
@@ -337,6 +434,28 @@ fn json_mode_preview_returns_data_per_sheet() {
     assert_eq!(data[0]["rows"][0]["region"], "North");
     assert_eq!(data[1]["sheet"], "Details");
     assert_eq!(data[1]["rows"][0]["note"], "first");
+}
+
+#[test]
+fn json_mode_combined_with_rows_prints_only_rows_pretty_printed() {
+    // --json must not override -r's "rows only" output mode -- it should only change
+    // how those rows get formatted (indented, multi-line) instead of switching to the
+    // full metadata-wrapped object.
+    let path = fixture("products.xlsx");
+    let out = run(&["-r", "--json", path.to_str().unwrap()]);
+    assert!(out.status.success());
+    let text = stdout(&out);
+    let v = parse_json(&text);
+
+    // just the rows array, no metadata wrapper
+    let rows = v.as_array().expect("top-level value should be an array of rows");
+    assert_eq!(rows.len(), 3);
+    assert_eq!(rows[0]["sku"], "SKU001");
+    assert!(v.get("extension").is_none(), "should not include metadata fields, got: {}", v);
+    assert!(v.get("data").is_none(), "should not be wrapped in a 'data' field, got: {}", v);
+
+    // and it should actually be indented/multi-line, unlike plain -r
+    assert!(text.contains("\n  "), "expected indented multi-line JSON, got: {}", text);
 }
 
 #[test]

@@ -139,8 +139,14 @@ impl FromArgs for OptionSet {
     };
     let mut field_mode = FieldNameMode::AutoA1;
     if let Some(colstyle) = args.colstyle.clone() {
-        if let (Some(col_key), Some(col_mode)) = colstyle.to_start_end(":") {
-            field_mode = FieldNameMode::from_key(&col_key, col_mode.starts_with_ci_alphanum("all"));
+        let (col_key, col_mode) = colstyle.to_start_end(":");
+        if let Some(col_key) = col_key {
+            // No ":mode" suffix at all (e.g. just "-c c01") means "apply to every field",
+            // same as an explicit "-c c01:all" -- not "leave the default A1-auto style
+            // in place", which is what a bare value used to do (silently, since matching
+            // both halves of the tuple failed and the whole block was skipped).
+            let override_all = col_mode.map_or(true, |m| m.starts_with_ci_alphanum("all"));
+            field_mode = FieldNameMode::from_key(&col_key, override_all);
         }
     }
     let jsonl = args.lines || read_mode.is_async();

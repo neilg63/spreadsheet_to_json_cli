@@ -7,7 +7,7 @@ edition = "2021"
 args = "^2.2.0"
 clap = { version = "^4.6.1", features = ["env", "derive"] }
 dotenv = { version = "^0.15.0", features = ["clap", "cli"] }
-spreadsheet-to-json = "0.2.0"
+spreadsheet-to-json = "0.2.2"
 to_segments = "0.1.2"
 simple-string-patterns = "0.4.0"
 uuid = { version = "^1.23.5", features = ["fast-rng", "v4"] }
@@ -15,13 +15,4 @@ uuid = { version = "^1.23.5", features = ["fast-rng", "v4"] }
 [dev-dependencies]
 rust_xlsxwriter = "0.89"
 serde_json = "1.0"
-
-# Local override while iterating together on the CLI and the library;
-# remove once the library's fixes are published to crates.io.
-# Cargo only honors [patch] from the build's root manifest, so is-truthy
-# has to be patched here too (a patch declared in spreadsheet_to_json's own
-# Cargo.toml has no effect when it's pulled in as a path dependency, as it is here).
-[patch.crates-io]
-spreadsheet-to-json = { path = "../spreadsheet_to_json" }
-is-truthy = { path = "../is_truthy" }
 

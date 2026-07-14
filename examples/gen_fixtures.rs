@@ -1,11 +1,12 @@
 //! Regenerates the .xlsx fixtures under tests/fixtures/ used by the integration tests.
 //! Run with: cargo run --example gen_fixtures
 
-use rust_xlsxwriter::Workbook;
+use rust_xlsxwriter::{ExcelDateTime, Format, Workbook};
 
 fn main() -> Result<(), rust_xlsxwriter::XlsxError> {
     gen_products()?;
     gen_multi_sheet()?;
+    gen_date_only()?;
     Ok(())
 }
 
@@ -58,5 +59,23 @@ fn gen_multi_sheet() -> Result<(), rust_xlsxwriter::XlsxError> {
     details.write_string(2, 1, "second")?;
 
     workbook.save("tests/fixtures/multi_sheet.xlsx")?;
+    Ok(())
+}
+
+/// A cell genuinely formatted as a date-only value in Excel (custom number format
+/// "yyyy-mm-dd", no time component shown) -- exercises the real-world case where the
+/// underlying serial value has an all-zero time, same as any plain Excel "Date" cell.
+fn gen_date_only() -> Result<(), rust_xlsxwriter::XlsxError> {
+    let mut workbook = Workbook::new();
+    let sheet = workbook.add_worksheet().set_name("Dates")?;
+    let date_fmt = Format::new().set_num_format("yyyy-mm-dd");
+
+    sheet.write_string(0, 0, "event")?;
+    sheet.write_string(0, 1, "occurred_on")?;
+    sheet.write_string(1, 0, "Launch")?;
+    let dt = ExcelDateTime::from_ymd(2023, 9, 8)?;
+    sheet.write_datetime_with_format(1, 1, &dt, &date_fmt)?;
+
+    workbook.save("tests/fixtures/date_only.xlsx")?;
     Ok(())
 }

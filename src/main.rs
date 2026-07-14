@@ -68,34 +68,32 @@ async fn main() -> ExitCode {
     Ok(data_set) => data_set
   };
 
-  if args.json {
-    println!("{}", to_string_pretty(&build_json_result(&data_set, &opts)).unwrap());
-    if debug_mode {
-      if let Some(start_timer) = start {
-        eprintln!("Total processing time: {:?}", start_timer.elapsed());
-      }
-    }
-    return ExitCode::SUCCESS;
-  }
-
+  // --json only changes how JSON gets formatted (indented, multi-line) -- it does not
+  // pick which content is printed. -r/-l/--exclude-cells (or none of them) still decide
+  // that, exactly as without --json.
   let rows_only = (args.lines && !args.preview) || args.rows;
   if rows_only {
       if args.lines {
+        // JSONL is inherently one compact object per line; --json doesn't apply here.
         lines = Some(data_set.rows().join("\n"));
+      } else if args.json {
+        lines = Some(to_string_pretty(&data_set.to_vec()).unwrap());
       } else {
         lines = Some(build_indented_json_rows(&data_set.rows()));
       }
   }
-  let result_lines = if args.exclude_cells {
-      opts.to_lines()
-  } else {
-      data_set.to_output_lines(args.lines)
-  };
   if rows_only {
     if let Some(lines_string) = lines {
       println!("{}", lines_string);
     }
+  } else if args.json {
+    println!("{}", to_string_pretty(&build_json_result(&data_set, &opts)).unwrap());
   } else {
+    let result_lines = if args.exclude_cells {
+        opts.to_lines()
+    } else {
+        data_set.to_output_lines(args.lines)
+    };
     for line in result_lines {
       println!("{}", line);
     }
