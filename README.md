@@ -33,9 +33,10 @@ If all columns from the left are populated, then automatic column field assignme
 - ```--omit_header, -o``` skip the header and assign columns to letters (a, b, c, d .... z, aa, ab etc..)
 - ```--colstyle, -c```: overrides the fallback column-naming convention for columns without a usable header, in the form ```style[:mode]```. `style` is `a1` for spreadsheet-style letters (`a`, `b`, ... `z`, `aa`, `ab`, ...) or `c01`/`n` for zero-padded numbers (`c01`, `c02`, ...). `mode` controls whether this replaces *every* column's name or only fills in for columns lacking a real header: `all` (or the default when `:mode` is omitted entirely, e.g. `-c c01`) renames every column, matching what you'd see as column letters in a spreadsheet app; anything else (e.g. `-c a1:auto`) only applies to columns without their own header text, leaving named columns alone.
 - ```--deferred, -d``` Defer row processing to an asynchronous task
-- ```--json, -j``` Output all info as JSON with data rows in "data"
+- ```--json, -j``` Formats JSON output as indented, multi-line JSON. Does not change *what* gets printed -- that's still up to `--rows`/`--lines` (or neither) exactly as without `--json`; see [Using with jq](#using-with-jq) below
 - ```--preview``` show preview of the first 10 lines only
-- ```--lines, -l``` JSON lines, one json object per line. Ideal for debugging and reading long files asynchronously
+- ```--rows, -r``` print just the data rows (no parsing metadata), as a JSON array
+- ```--lines, -l``` JSON lines: one compact JSON object per row, with no surrounding array (JSONL/NDJSON). Implies `--rows` on its own -- no need to pass both -- and if you do, `--lines` wins
 - ```--debug``` debug mode
 
 ## Using with `jq`
@@ -52,15 +53,18 @@ spread-cli --json sales.xlsx | jq '.data[] | {sku, price}'
 spread-cli --json sales.xlsx | jq 'del(.data)'                    # metadata only
 spread-cli --json --preview workbook.xlsx | jq '.data[] | {sheet, row_count}'  # every sheet
 
-# -r --json: just the rows, as a pretty-printed array -- no metadata wrapper
-spread-cli -r --json sales.xlsx | jq '.[] | select(.price > 10)'
+# -r --json (or the bundled short form -rj): just the rows, as a pretty-printed array --
+# no metadata wrapper. Single-letter flags can be bundled like this wherever it's handy.
+spread-cli -rj sales.xlsx | jq '.[] | select(.price > 10)'
+spread-cli -rj sales.xlsx -k "date|date" | jq '.[] | { date, total_price }'
 spread-cli -r --json sales.xlsx | jq -r '.[] | [.sku, .name, .price] | @csv'
 
-# -r -l: plain JSON Lines, one row per line, no wrapper -- best for streaming into
-# another NDJSON-consuming tool, or very large files (jq can consume it line-by-line
-# rather than waiting for one big array/object to finish printing)
-spread-cli -r -l sales.xlsx | jq -c 'select(.price > 10)'
-spread-cli -r -l sales.xlsx | jq -c '{sku, total: (.price * .qty)}' > sales.ndjson
+# -l: plain JSON Lines, one row per line, no wrapper -- best for streaming into another
+# NDJSON-consuming tool, or very large files (jq can consume it line-by-line rather than
+# waiting for one big array/object to finish printing). -l already implies rows-only on
+# its own, same as -r; no need for both -- and if you do pass both, -l wins.
+spread-cli -l sales.xlsx | jq -c 'select(.price > 10)'
+spread-cli -l sales.xlsx | jq -c '{sku, total: (.price * .qty)}' > sales.ndjson
 ```
 
 NB: This is still an alpha release

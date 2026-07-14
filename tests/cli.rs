@@ -115,7 +115,7 @@ fn bad_keys_integer_default_reports_error_without_panicking() {
 #[test]
 fn parses_basic_xlsx_rows() {
     let path = fixture("products.xlsx");
-    let out = run(&["-r", "-l", path.to_str().unwrap()]);
+    let out = run(&["-l", path.to_str().unwrap()]);
     assert!(out.status.success());
     let rows = parse_jsonl_rows(&stdout(&out));
     assert_eq!(rows.len(), 3);
@@ -130,7 +130,7 @@ fn parses_basic_xlsx_rows() {
 #[test]
 fn max_flag_limits_row_count() {
     let path = fixture("products.xlsx");
-    let out = run(&["-r", "-l", "-m", "1", path.to_str().unwrap()]);
+    let out = run(&["-l", "-m", "1", path.to_str().unwrap()]);
     assert!(out.status.success());
     let rows = parse_jsonl_rows(&stdout(&out));
     assert_eq!(rows.len(), 1);
@@ -140,7 +140,7 @@ fn max_flag_limits_row_count() {
 #[test]
 fn keys_flag_renames_columns_by_source_key() {
     let path = fixture("products.xlsx");
-    let out = run(&["-r", "-l", "-k", "sku:product_code,name:product_name", path.to_str().unwrap()]);
+    let out = run(&["-l", "-k", "sku:product_code,name:product_name", path.to_str().unwrap()]);
     assert!(out.status.success());
     let rows = parse_jsonl_rows(&stdout(&out));
     assert_eq!(rows.len(), 3);
@@ -155,7 +155,7 @@ fn keys_flag_overrides_one_field_out_of_many_without_padding() {
     // the whole point of source-key matching: override a single field out of many,
     // without needing empty placeholder entries for the columns ahead of it.
     let path = fixture("products.xlsx");
-    let out = run(&["-r", "-l", "-k", "qty:quantity|integer", path.to_str().unwrap()]);
+    let out = run(&["-l", "-k", "qty:quantity|integer", path.to_str().unwrap()]);
     assert!(out.status.success());
     let rows = parse_jsonl_rows(&stdout(&out));
     assert_eq!(rows[0]["quantity"], 100);
@@ -169,7 +169,7 @@ fn keys_flag_overrides_one_field_out_of_many_without_padding() {
 fn keys_flag_format_only_override_keeps_natural_name() {
     // omitting ":new_key" before the "|" means "keep the natural name, just change the format"
     let path = fixture("products.csv");
-    let out = run(&["-r", "-l", "-k", "qty|boolean", path.to_str().unwrap()]);
+    let out = run(&["-l", "-k", "qty|boolean", path.to_str().unwrap()]);
     assert!(out.status.success());
     let rows = parse_jsonl_rows(&stdout(&out));
     assert_eq!(rows[0]["qty"], true); // 100 -> truthy
@@ -180,7 +180,7 @@ fn keys_flag_format_only_override_keeps_natural_name() {
 #[test]
 fn keys_flag_unmatched_source_key_is_silently_ignored() {
     let path = fixture("products.xlsx");
-    let out = run(&["-r", "-l", "-k", "nonexistent_field:renamed", path.to_str().unwrap()]);
+    let out = run(&["-l", "-k", "nonexistent_field:renamed", path.to_str().unwrap()]);
     assert!(out.status.success());
     let rows = parse_jsonl_rows(&stdout(&out));
     assert_eq!(rows.len(), 3);
@@ -194,7 +194,7 @@ fn keys_flag_compound_entries_mix_rename_and_format_only() {
     // A single --keys value can mix "source_key:new_key|format" entries with plain
     // "source_key:new_key" (rename only, no format) entries in the same comma list.
     let path = fixture("products.xlsx");
-    let out = run(&["-r", "-l", "-k", "qty:quantity|integer,sku:code", path.to_str().unwrap()]);
+    let out = run(&["-l", "-k", "qty:quantity|integer,sku:code", path.to_str().unwrap()]);
     assert!(out.status.success());
     let rows = parse_jsonl_rows(&stdout(&out));
     assert_eq!(rows[0]["code"], "SKU001");
@@ -236,7 +236,7 @@ fn colstyle_flag_bare_a1_applies_to_every_field() {
 #[test]
 fn sheet_selection_by_name() {
     let path = fixture("multi_sheet.xlsx");
-    let out = run(&["-r", "-l", "-s", "Details", path.to_str().unwrap()]);
+    let out = run(&["-l", "-s", "Details", path.to_str().unwrap()]);
     assert!(out.status.success());
     let rows = parse_jsonl_rows(&stdout(&out));
     assert_eq!(rows.len(), 2);
@@ -248,7 +248,7 @@ fn sheet_selection_by_name() {
 fn sheet_selection_by_index() {
     let path = fixture("multi_sheet.xlsx");
     // index 1 is the "Details" sheet (0 is "Summary")
-    let out = run(&["-r", "-l", "-i", "1", path.to_str().unwrap()]);
+    let out = run(&["-l", "-i", "1", path.to_str().unwrap()]);
     assert!(out.status.success());
     let rows = parse_jsonl_rows(&stdout(&out));
     assert_eq!(rows.len(), 2);
@@ -271,7 +271,7 @@ fn preview_mode_lists_every_sheet() {
 #[test]
 fn real_world_xlsx_parses_all_data_rows() {
     let path = fixture("sample-data-1.xlsx");
-    let out = run(&["-r", "-l", path.to_str().unwrap()]);
+    let out = run(&["-l", path.to_str().unwrap()]);
     assert!(out.status.success());
     let rows = parse_jsonl_rows(&stdout(&out));
     // 401 rows in the sheet including the header, so 400 data rows
@@ -289,7 +289,7 @@ fn keys_flag_casts_native_datetime_column_to_date_only() {
     // real (non-string) datetime cells -- only the row-wide --date-only flag was ever
     // consulted -- so casting a single datetime column to date-only had no effect at all.
     let path = fixture("sample-data-1.xlsx");
-    let out = run(&["-r", "-l", "-k", "start_time|date", path.to_str().unwrap()]);
+    let out = run(&["-l", "-k", "start_time|date", path.to_str().unwrap()]);
     assert!(out.status.success());
     let rows = parse_jsonl_rows(&stdout(&out));
     // exactly 400 data rows -- no leaked header row (see next test) and no dropped rows
@@ -307,7 +307,7 @@ fn keys_flag_with_format_override_does_not_leak_header_row() {
     // into null), which no longer matched the literal header text -- so the header row
     // was wrongly kept as a bogus extra data row.
     let path = fixture("sample-data-1.xlsx");
-    let out = run(&["-r", "-l", "-k", "start_time|date", path.to_str().unwrap()]);
+    let out = run(&["-l", "-k", "start_time|date", path.to_str().unwrap()]);
     assert!(out.status.success());
     let rows = parse_jsonl_rows(&stdout(&out));
     assert_eq!(rows.len(), 400);
@@ -325,12 +325,12 @@ fn keys_flag_casts_genuine_excel_date_cell_to_date_only() {
     // to be exactly midnight", so by default it renders with the full ISO datetime
     // (including the meaningless T00:00:00.000Z). --keys "field|date" is the fix.
     let path = fixture("date_only.xlsx");
-    let default_out = run(&["-r", "-l", path.to_str().unwrap()]);
+    let default_out = run(&["-l", path.to_str().unwrap()]);
     assert!(default_out.status.success());
     let default_rows = parse_jsonl_rows(&stdout(&default_out));
     assert_eq!(default_rows[0]["occurred_on"], "2023-09-08T00:00:00.000Z");
 
-    let cast_out = run(&["-r", "-l", "-k", "occurred_on|date", path.to_str().unwrap()]);
+    let cast_out = run(&["-l", "-k", "occurred_on|date", path.to_str().unwrap()]);
     assert!(cast_out.status.success());
     let cast_rows = parse_jsonl_rows(&stdout(&cast_out));
     assert_eq!(cast_rows[0]["occurred_on"], "2023-09-08");
@@ -339,7 +339,7 @@ fn keys_flag_casts_genuine_excel_date_cell_to_date_only() {
 #[test]
 fn real_world_ods_default_sheet_is_first_sheet() {
     let path = fixture("sample-data-2.ods");
-    let out = run(&["-r", "-l", "-m", "1", path.to_str().unwrap()]);
+    let out = run(&["-l", "-m", "1", path.to_str().unwrap()]);
     assert!(out.status.success());
     let rows = parse_jsonl_rows(&stdout(&out));
     assert_eq!(rows.len(), 1);
