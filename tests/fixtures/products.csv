@@ -1,0 +1,4 @@
+sku,name,price,qty,in_stock
+SKU101,Widget,9.99,100,true
+SKU202,Gadget,19.5,50,true
+SKU303,Gizmo,5,0,false
