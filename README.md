@@ -19,7 +19,15 @@ Spreadsheets are processed via the *Calamine* library and CSV/TSV files by the C
 
 ## Spreadsheet notes
 
-If all columns from the left are populated, then automatic column field assignment should match columns in the *A1+* format. If the first column is empty, then it will be skipped. the same logic applies to rows. The default header keys come from the first populated row unless overridden with the ```--keys``` flag.
+By default, field names come from the header row (the first row, unless you point `--header_row` at a different one), snake_cased -- e.g. a header of "Gross Annual Salary (USD)" becomes the field key `gross_annual_salary_usd`. A1-style letters (`a`, `b`, `c`, ... `z`, `aa`, `ab`, ...) are only used as a *fallback*, and only for individual columns that don't have usable header text (an empty header cell, or when `--omit_header` is set) -- they are not the default naming scheme.
+
+For wide spreadsheets (20+ columns) where the original headers are long or awkwardly worded, it's often easier to force *every* column to use short A1 letters (or `c01`/`c02`/... zero-padded numbers) with `--colstyle`/`-c`, then reassign the ones you care about by letter with `--keys` -- rather than typing out each long snake_cased header name in full:
+
+```sh
+spread-cli my-spreadsheet.xlsx -c "a1" --keys "a:first_name,b:last_name,c:salary,d:start_date"
+```
+
+This is especially handy when a header is genuinely unwieldy to reference by name, e.g. "Gross Annual Salary (USD)" -- `-c "a1"` turns it (and every other column) into a plain letter first, so you only need to know its position (`c`), not retype the header text.
 
 
 ## Options:

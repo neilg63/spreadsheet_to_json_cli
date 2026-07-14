@@ -5,7 +5,7 @@ use spreadsheet_to_json::heck::ToSnakeCase;
 use spreadsheet_to_json::serde_json::{Number, Value};
 use spreadsheet_to_json::FieldNameMode;
 use spreadsheet_to_json::{is_truthy::*, options::{Column, OptionSet}, Format, ReadMode};
-use simple_string_patterns::SimpleMatch;
+use simple_string_patterns::{SimpleMatch, StripCharacters};
 use to_segments::ToSegments;
 
 const DEFAULT_MAX_FOR_PREVIEW: u32 = 10;
@@ -135,14 +135,21 @@ impl FromArgs for OptionSet {
     };
     let mut field_mode = FieldNameMode::AutoA1;
     if let Some(colstyle) = args.colstyle.clone() {
-        let (col_key, col_mode) = colstyle.to_start_end(":");
+        let (col_key, col_mode) = colstyle.to_head_tail(":");
         if let Some(col_key) = col_key {
             // No ":mode" suffix at all (e.g. just "-c c01") means "apply to every field",
             // same as an explicit "-c c01:all" -- not "leave the default A1-auto style
             // in place", which is what a bare value used to do (silently, since matching
             // both halves of the tuple failed and the whole block was skipped).
             let override_all = col_mode.is_none_or(|m| m.starts_with_ci_alphanum("all"));
-            field_mode = FieldNameMode::from_key(col_key, override_all);
+            let colkey = col_key.strip_non_alphanum();
+            // r1c1  and r1 arre also interpreted as c1
+            let col_key = if colkey.starts_with_ci("r1") {
+                "c1"
+            } else {
+                &colkey
+            };
+            field_mode = FieldNameMode::from_key(&col_key, override_all);
         }
     }
     let jsonl = args.lines || read_mode.is_async();
