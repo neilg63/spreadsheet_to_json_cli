@@ -17,6 +17,14 @@ It supports the following formats:
 
 Spreadsheets are processed via the *Calamine* library and CSV/TSV files by the CSV library.
 
+## Installation
+
+```sh
+cargo install spread-cli
+```
+
+This downloads, builds, and installs the `spread-cli` binary into `~/.cargo/bin`, which `rustup`'s installer already puts on your `PATH` -- so `spread-cli` is available as a normal shell command right away, no separate download or PATH setup needed. Requires the Rust toolchain (via [rustup](https://rustup.rs)). Note this is `cargo install`, not `cargo add` -- `cargo add` only adds a crate as a *dependency* of whatever project you're currently in; it won't put a `spread-cli` binary on your PATH.
+
 ## Spreadsheet notes
 
 By default, field names come from the header row (the first row, unless you point `--header-row` at a different one), snake_cased e.g. a header of "Gross Annual Salary (USD)" becomes the field key `gross_annual_salary_usd`. A1-style letters (`a`, `b`, `c`, ... `z`, `aa`, `ab`, ...) are only used as a *fallback*, and only for individual columns that don't have usable header text (an empty header cell, or when `--omit-header` is set) -- they are not the default naming scheme.
