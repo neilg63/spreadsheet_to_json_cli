@@ -67,4 +67,4 @@ spread-cli -l sales.xlsx | jq -c 'select(.price > 10)'
 spread-cli -l sales.xlsx | jq -c '{sku, total: (.price * .qty)}' > sales.ndjson
 ```
 
-NB: This is still an alpha release
+
