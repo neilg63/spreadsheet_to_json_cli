@@ -4,7 +4,7 @@
 
 # Spreadsheet to JSON CLI (spread-cli)
 
-This crate provides a simple command line interface to convert common spreadsheet and CSV files into JSON or JSONL (JSON Lines) files suitable data interchange.
+This crate provides a simple command line interface to convert common spreadsheet and CSV files into JSON or JSONL (JSON Lines) files suitable for data interchange.
 
 It supports the following formats:
 
