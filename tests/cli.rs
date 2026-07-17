@@ -128,6 +128,19 @@ fn parses_basic_xlsx_rows() {
 }
 
 #[test]
+fn parses_xlsm_same_as_xlsx() {
+    // Regression: .xlsm (macro-enabled) files were rejected by our own extension check
+    // before ever reaching calamine, even though calamine reads .xlsm through the exact
+    // same Xlsx reader as .xlsx and has always supported it.
+    let path = fixture("products.xlsm");
+    let out = run(&["-l", path.to_str().unwrap()]);
+    assert!(out.status.success(), "got: {}", stderr(&out));
+    let rows = parse_jsonl_rows(&stdout(&out));
+    assert_eq!(rows.len(), 3);
+    assert_eq!(rows[0]["sku"], "SKU001");
+}
+
+#[test]
 fn max_flag_limits_row_count() {
     let path = fixture("products.xlsx");
     let out = run(&["-l", "-m", "1", path.to_str().unwrap()]);
@@ -290,6 +303,29 @@ fn sheet_selection_by_name() {
 }
 
 #[test]
+fn sheet_selection_by_name_is_fuzzy() {
+    // Case-insensitive, ignoring spaces/punctuation -- see the library's own
+    // match_sheet_name_and_index tests for the underlying matching logic; this confirms
+    // it end-to-end through the actual --sheet flag.
+    let path = fixture("multi_sheet.xlsx");
+    // case, surrounding whitespace, and surrounding punctuation are all ignored
+    for variant in ["DETAILS", "details", "  Details  ", "[Details]", "Details!"] {
+        let out = run(&["-l", "-s", variant, path.to_str().unwrap()]);
+        assert!(out.status.success(), "variant '{}' should succeed", variant);
+        let rows = parse_jsonl_rows(&stdout(&out));
+        assert_eq!(rows.len(), 2, "variant '{}' got: {:?}", variant, rows);
+        assert_eq!(rows[0]["note"], "first", "variant '{}'", variant);
+    }
+
+    // punctuation *within* the name introduces a new word boundary, so it's a different
+    // snake_case string, not a fuzzy match -- "de-tails" is not the same as "Details"
+    let out = run(&["-l", "-s", "de-tails", path.to_str().unwrap()]);
+    assert!(out.status.success());
+    let rows = parse_jsonl_rows(&stdout(&out));
+    assert_eq!(rows[0]["region"], "North", "unmatched --sheet falls back to the first sheet");
+}
+
+#[test]
 fn sheet_selection_by_index() {
     let path = fixture("multi_sheet.xlsx");
     // index 1 is the "Details" sheet (0 is "Summary")
@@ -324,17 +360,17 @@ fn preview_with_rows_only_does_not_drop_any_sheet() {
     let v = parse_json(&stdout(&out));
     let blocks = v.as_array().expect("top-level value should be an array of per-sheet blocks");
     assert_eq!(blocks.len(), 2, "both sheets should be present, got: {}", v);
-    assert_eq!(blocks[0]["sheet"], "Summary");
+    assert_eq!(blocks[0]["sheet"], "summary");
     assert_eq!(blocks[0]["rows"][0]["region"], "North");
-    assert_eq!(blocks[1]["sheet"], "Details");
+    assert_eq!(blocks[1]["sheet"], "details");
     assert_eq!(blocks[1]["rows"][0]["note"], "first");
 
     // same fix applies without --json (plain -p -r)
     let out = run(&["-p", "-r", path.to_str().unwrap()]);
     assert!(out.status.success());
     let text = stdout(&out);
-    assert!(text.contains("\"sheet\":\"Summary\""), "got: {}", text);
-    assert!(text.contains("\"sheet\":\"Details\""), "got: {}", text);
+    assert!(text.contains("\"sheet\":\"summary\""), "got: {}", text);
+    assert!(text.contains("\"sheet\":\"details\""), "got: {}", text);
 }
 
 // --- real-world sample files (from the spreadsheet_to_json library's own test data) ---
@@ -444,9 +480,9 @@ fn json_mode_single_sheet_has_expected_shape() {
     let v = parse_json(&stdout(&out));
 
     assert_eq!(v["extension"], "xlsx");
-    assert_eq!(v["sheets"], serde_json::json!(["Products"]));
+    assert_eq!(v["sheets"], serde_json::json!(["products"]));
     assert_eq!(v["column_style"], "A1 auto");
-    assert_eq!(v["selected_sheet"], "Products");
+    assert_eq!(v["selected_sheet"], "products");
     assert_eq!(v["row_count"], 4); // 3 data rows + header
     assert_eq!(v["fields"], serde_json::json!(["sku", "name", "price", "qty", "in_stock"]));
     assert_eq!(v["multimode"], false);
@@ -493,7 +529,7 @@ fn json_mode_preview_returns_data_per_sheet() {
     let v = parse_json(&stdout(&out));
 
     assert_eq!(v["multimode"], true);
-    assert_eq!(v["sheets"], serde_json::json!(["Summary", "Details"]));
+    assert_eq!(v["sheets"], serde_json::json!(["summary", "details"]));
     // no single selected sheet or index when every sheet is being read
     let obj = v.as_object().unwrap();
     assert!(!obj.contains_key("selected_sheet"));
@@ -501,10 +537,70 @@ fn json_mode_preview_returns_data_per_sheet() {
 
     let data = v["data"].as_array().expect("data should be an array");
     assert_eq!(data.len(), 2);
-    assert_eq!(data[0]["sheet"], "Summary");
+    assert_eq!(data[0]["sheet"], "summary");
     assert_eq!(data[0]["rows"][0]["region"], "North");
-    assert_eq!(data[1]["sheet"], "Details");
+    assert_eq!(data[1]["sheet"], "details");
     assert_eq!(data[1]["rows"][0]["note"], "first");
+}
+
+#[test]
+fn json_mode_preview_has_no_top_level_columns_map() {
+    // A top-level "columns" map used to duplicate exactly what's already nested as
+    // "fields" inside each "data" sheet block -- removed as redundant.
+    let path = fixture("multi_sheet.xlsx");
+    let out = run(&["--json", "-p", path.to_str().unwrap()]);
+    assert!(out.status.success());
+    let v = parse_json(&stdout(&out));
+    assert!(v.as_object().unwrap().get("columns").is_none(), "got: {}", v);
+
+    let data = v["data"].as_array().expect("data should be an array");
+    assert_eq!(data[0]["fields"], serde_json::json!(["region", "total"]));
+    assert_eq!(data[1]["fields"], serde_json::json!(["id", "note"]));
+}
+
+#[test]
+fn json_mode_single_sheet_has_no_columns_map() {
+    let path = fixture("products.xlsx");
+    let out = run(&["--json", path.to_str().unwrap()]);
+    assert!(out.status.success());
+    let v = parse_json(&stdout(&out));
+    assert!(v.as_object().unwrap().get("columns").is_none(), "got: {}", v);
+}
+
+#[test]
+fn exclude_cells_flag_drops_row_values_but_keeps_fields_in_json_mode() {
+    // Regression: --exclude-cells only ever affected the plain-text output path --
+    // combined with --json it was silently ignored and full row data was still printed.
+    let path = fixture("multi_sheet.xlsx");
+
+    // multi-sheet: each sheet block keeps "sheet"/"row_count"/"fields" but drops "rows"
+    let out = run(&["--json", "-p", "-x", path.to_str().unwrap()]);
+    assert!(out.status.success());
+    let v = parse_json(&stdout(&out));
+    // per-sheet "fields" is still there (nested in "data") even with cells excluded
+    let data = v["data"].as_array().unwrap();
+    assert_eq!(data[0]["fields"], serde_json::json!(["region", "total"]));
+    assert_eq!(data[1]["fields"], serde_json::json!(["id", "note"]));
+    assert_eq!(data.len(), 2);
+    for block in data {
+        assert!(block.get("rows").is_none(), "got: {}", v);
+        assert!(block.get("fields").is_some());
+        assert!(block.get("row_count").is_some());
+    }
+
+    // single-sheet: "data" would always be an empty array here, so it's omitted entirely
+    let path = fixture("products.xlsx");
+    let out = run(&["--json", "-x", path.to_str().unwrap()]);
+    assert!(out.status.success());
+    let v = parse_json(&stdout(&out));
+    assert!(v.as_object().unwrap().get("data").is_none(), "got: {}", v);
+    assert_eq!(v["fields"], serde_json::json!(["sku", "name", "price", "qty", "in_stock"]));
+
+    // plain text mode (no --json) is unaffected by this fix -- still the pre-existing
+    // options dump, not a data-derived overview
+    let out = run(&["-x", path.to_str().unwrap()]);
+    assert!(out.status.success());
+    assert!(stdout(&out).contains("column style:"), "got: {}", stdout(&out));
 }
 
 #[test]

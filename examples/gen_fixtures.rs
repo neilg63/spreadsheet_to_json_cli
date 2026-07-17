@@ -5,6 +5,7 @@ use rust_xlsxwriter::{ExcelDateTime, Format, Workbook};
 
 fn main() -> Result<(), rust_xlsxwriter::XlsxError> {
     gen_products()?;
+    gen_xlsm_from_products();
     gen_multi_sheet()?;
     gen_date_only()?;
     gen_wide_columns();
@@ -37,6 +38,15 @@ fn gen_products() -> Result<(), rust_xlsxwriter::XlsxError> {
 
     workbook.save("tests/fixtures/products.xlsx")?;
     Ok(())
+}
+
+/// A .xlsm (macro-enabled) fixture -- .xlsm is the exact same OOXML container as .xlsx
+/// (calamine reads both through the same Xlsx reader), so a real macro-enabled file isn't
+/// needed to exercise the format: reusing products.xlsx's bytes under a .xlsm extension
+/// is sufficient to confirm the extension itself isn't rejected before calamine gets it.
+fn gen_xlsm_from_products() {
+    std::fs::copy("tests/fixtures/products.xlsx", "tests/fixtures/products.xlsm")
+        .expect("failed to write tests/fixtures/products.xlsm");
 }
 
 /// Two-sheet workbook for testing --preview and --sheet selection.

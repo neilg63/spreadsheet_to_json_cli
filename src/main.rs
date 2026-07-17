@@ -6,9 +6,10 @@ use std::process::ExitCode;
 #[cfg(unix)]
 use std::process::{Command, Stdio};
 
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 use args::*;
 use spreadsheet_to_json::error::GenericError;
+use spreadsheet_to_json::heck::ToSnakeCase;
 use spreadsheet_to_json::indexmap::IndexMap;
 use spreadsheet_to_json::serde_json::{Value, to_string_pretty};
 use spreadsheet_to_json::tokio::time::Instant;
@@ -23,6 +24,16 @@ type RowCallback = Box<dyn Fn(IndexMap<String, Value>) -> Result<(), GenericErro
 #[tokio::main]
 async fn main() -> ExitCode {
   let args = Args::parse();
+
+  // No path at all (bare invocation, or flags without a target file) -- there's nothing
+  // useful this can do, so show help instead of a terse "no spreadsheet file specified"
+  // error, same as most CLIs do when the required target argument is missing.
+  if args.path.is_none() {
+    Args::command().print_help().ok();
+    println!();
+    return ExitCode::SUCCESS;
+  }
+
   let debug_mode = args.debug;
 
   let opts = match OptionSet::from_args(&args) {
@@ -114,7 +125,7 @@ async fn main() -> ExitCode {
         // data_set.rows()/to_vec() only ever return the *first* sheet -- with multiple
         // sheets (--preview) that would silently drop every sheet after it, so rows-only
         // mode needs the same per-sheet blocks the full --json object already uses.
-        let blocks = multimode_sheet_blocks(&data_set);
+        let blocks = multimode_sheet_blocks(&data_set, !args.exclude_cells);
         if args.lines {
           lines = Some(blocks.iter().map(|b| b.to_string()).collect::<Vec<_>>().join("\n"));
         } else if args.json {
@@ -152,7 +163,7 @@ async fn main() -> ExitCode {
     // to stderr here, never stdout (keeping stdout safe to pipe into jq/NDJSON tools).
     print_debug_timing(debug_mode, start, true);
   } else if args.json {
-    let mut json_result = build_json_result(&data_set, &opts);
+    let mut json_result = build_json_result(&data_set, &opts, args.exclude_cells);
     if debug_mode {
       if let Some(start_timer) = start {
         json_result["processing_time_ms"] = json!(start_timer.elapsed().as_secs_f64() * 1000.0);
@@ -211,7 +222,7 @@ fn validate_path(path_opt: Option<&str>) -> Result<(), String> {
   if !path_data.is_valid() {
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("(none)");
     return Err(format!(
-      "incompatible file format '.{}'. Supported formats: xlsx, xls, xlsb, ods, csv, tsv",
+      "incompatible file format '.{}'. Supported formats: xlsx, xlsm, xls, xlsb, ods, csv, tsv",
       ext
     ));
   }
@@ -228,34 +239,57 @@ fn print_error(json_mode: bool, msg: &str) {
   }
 }
 
-/// One JSON block per sheet: {"sheet", "row_count", "fields", "rows"}. Used both by the
-/// full --json object's "data" field and directly by the rows-only (-r/-l) path when
-/// --preview is active -- multimode results have no single flat row list to hand back
+/// One JSON block per sheet: {"sheet", "row_count", "fields", "rows"} (or without "rows"
+/// when `include_rows` is false, for --exclude-cells). Used both by the full --json
+/// object's "data" field and directly by the rows-only (-r/-l) path when --preview is
+/// active -- multimode results have no single flat row list to hand back
 /// (data_set.rows()/to_vec() only ever return the *first* sheet's rows), so rows-only
 /// mode needs this same per-sheet shape rather than silently dropping every other sheet.
-fn multimode_sheet_blocks(result: &ResultSet) -> Vec<Value> {
-  result.data.sheets().iter().map(|sheet| json!({
-    "sheet": sheet.name(),
-    "row_count": sheet.num_rows,
-    "fields": sheet.keys,
-    "rows": sheet.rows
-  })).collect()
+///
+/// "sheet" is the snake_cased key (sheet.key()), not the raw sheet name (sheet.name()):
+/// that's the form --sheet actually matches against, so what's displayed is always
+/// something you could paste straight back into --sheet.
+fn multimode_sheet_blocks(result: &ResultSet, include_rows: bool) -> Vec<Value> {
+  result.data.sheets().iter().map(|sheet| {
+    if include_rows {
+      json!({
+        "sheet": sheet.key(),
+        "row_count": sheet.num_rows,
+        "fields": sheet.keys,
+        "rows": sheet.rows
+      })
+    } else {
+      json!({
+        "sheet": sheet.key(),
+        "row_count": sheet.num_rows,
+        "fields": sheet.keys
+      })
+    }
+  }).collect()
 }
 
 /// Builds the single structured JSON object emitted by --json, covering every
 /// query mode (single sheet, multi-sheet preview, CSV/TSV, deferred).
-fn build_json_result(result: &ResultSet, opts: &OptionSet) -> Value {
+///
+/// `exclude_cells` (--exclude-cells/-x) drops row *values* from the result while keeping
+/// everything else (sheet names, row counts, column/field names) -- a quick structural
+/// overview of a workbook's worksheets without the cost or bulk of the actual data.
+fn build_json_result(result: &ResultSet, opts: &OptionSet, exclude_cells: bool) -> Value {
   let is_workbook = result.extension != "csv" && result.extension != "tsv";
   let mut out: IndexMap<String, Value> = IndexMap::new();
 
   out.insert("extension".to_string(), json!(result.extension));
   if is_workbook {
-    out.insert("sheets".to_string(), json!(result.sheets));
+    // snake_cased, not the raw sheet name -- that's the form --sheet matches against, so
+    // what's displayed here is always something you could paste straight back into --sheet.
+    let sheets: Vec<String> = result.sheets.iter().map(|s| s.to_snake_case()).collect();
+    out.insert("sheets".to_string(), json!(sheets));
     out.insert("column_style".to_string(), json!(opts.field_mode.to_string()));
   }
   if is_workbook {
     if let Some(selected) = &result.selected {
-      out.insert("selected_sheet".to_string(), json!(selected.first().cloned().unwrap_or_default()));
+      let selected_sheet = selected.first().map(|s| s.to_snake_case()).unwrap_or_default();
+      out.insert("selected_sheet".to_string(), json!(selected_sheet));
     }
   }
   out.insert("row_count".to_string(), json!(result.num_rows));
@@ -276,12 +310,13 @@ fn build_json_result(result: &ResultSet, opts: &OptionSet) -> Value {
     out.insert("output_reference".to_string(), json!(out_ref));
   }
 
-  let data = if result.multimode() {
-    json!(multimode_sheet_blocks(result))
-  } else {
-    json!(result.to_vec())
-  };
-  out.insert("data".to_string(), data);
+  if result.multimode() {
+    out.insert("data".to_string(), json!(multimode_sheet_blocks(result, !exclude_cells)));
+  } else if !exclude_cells {
+    out.insert("data".to_string(), json!(result.to_vec()));
+  }
+  // single-sheet + --exclude-cells: "data" would always be an empty array, so omit it
+  // entirely rather than print a key that carries no information.
 
   json!(out)
 }
@@ -290,7 +325,7 @@ fn build_json_result(result: &ResultSet, opts: &OptionSet) -> Value {
 fn describe_error(err: &GenericError) -> String {
   match err.0 {
     "file_unavailable" => "file not found.".to_string(),
-    "unsupported_format" => "incompatible file format. Supported formats: xlsx, xls, xlsb, ods, csv, tsv.".to_string(),
+    "unsupported_format" => "incompatible file format. Supported formats: xlsx, xlsm, xls, xlsb, ods, csv, tsv.".to_string(),
     "no_filepath_specified" => "no spreadsheet file specified.".to_string(),
     "workbook_with_no_sheets" => "the workbook has no readable worksheets.".to_string(),
     "cannot_open_workbook" => "could not open the workbook; the file may be corrupt or not a valid spreadsheet.".to_string(),

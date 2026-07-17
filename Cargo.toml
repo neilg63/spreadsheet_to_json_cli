@@ -15,7 +15,7 @@ exclude = ["tests/fixtures/*"]
 args = "^2.2.0"
 clap = { version = "^4.6.1", features = ["env", "derive"] }
 dotenv = { version = "^0.15.0", features = ["clap", "cli"] }
-spreadsheet-to-json = "0.2.2"
+spreadsheet-to-json = "0.2.3"
 to_segments = "0.1.2"
 simple-string-patterns = "0.4.0"
 uuid = { version = "^1.23.5", features = ["fast-rng", "v4"] }
@@ -23,4 +23,5 @@ uuid = { version = "^1.23.5", features = ["fast-rng", "v4"] }
 [dev-dependencies]
 rust_xlsxwriter = "0.89"
 serde_json = "1.0"
+
 

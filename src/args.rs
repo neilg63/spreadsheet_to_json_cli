@@ -23,12 +23,6 @@ pub struct Args {
   
   pub path: Option<String>,
 
-  #[clap(long, value_parser, default_value_t = false)]
-  pub euro_number_format: bool,
-
-  #[clap(long, value_parser, default_value_t = false) ]
-  pub date_only: bool,
-
   #[clap(short = 'k', long, value_parser) ]
   pub keys: Option<String>,
 
@@ -67,6 +61,12 @@ pub struct Args {
 
   #[clap(short = 'o', long, value_parser) ]
   pub output: Option<String>, // export file path for --deferred; overrides the random UUID filename
+
+  #[clap(long, value_parser, default_value_t = false) ]
+  pub date_only: bool,
+
+  #[clap(long, value_parser, default_value_t = false)]
+  pub euro_number_format: bool,
 
   // Internal: set when this invocation IS the detached background worker spawned by a
   // user-facing --deferred run, so it knows to do the actual (blocking, from its own
