@@ -83,14 +83,17 @@ fn directory_path_reports_clear_error() {
 }
 
 #[test]
-fn no_path_reports_usage_error() {
+fn no_path_shows_help() {
+    // Bare invocation, or flags without a target file, isn't an error -- there's nothing
+    // useful to run, so show help instead of a terse usage error.
     let out = run(&[]);
-    assert_eq!(out.status.code(), Some(2));
-    assert!(
-        stderr(&out).contains("no spreadsheet file specified"),
-        "got: {}",
-        stderr(&out)
-    );
+    assert_eq!(out.status.code(), Some(0));
+    assert!(stdout(&out).contains("Usage: spread-cli"), "got: {}", stdout(&out));
+
+    // same for flags with no path
+    let out = run(&["-p", "-j"]);
+    assert_eq!(out.status.code(), Some(0));
+    assert!(stdout(&out).contains("Usage: spread-cli"), "got: {}", stdout(&out));
 }
 
 #[test]
@@ -544,18 +547,24 @@ fn json_mode_preview_returns_data_per_sheet() {
 }
 
 #[test]
-fn json_mode_preview_has_no_top_level_columns_map() {
-    // A top-level "columns" map used to duplicate exactly what's already nested as
-    // "fields" inside each "data" sheet block -- removed as redundant.
+fn json_mode_preview_has_top_level_columns_map_not_per_sheet_fields() {
+    // Field names for a multi-sheet result live once each in the top-level "columns"
+    // map ({sheet_key: [field_names]}), not repeated as "fields" inside every "data"
+    // sheet block -- keeps a single source of truth instead of two copies of the same
+    // names living in different places.
     let path = fixture("multi_sheet.xlsx");
     let out = run(&["--json", "-p", path.to_str().unwrap()]);
     assert!(out.status.success());
     let v = parse_json(&stdout(&out));
-    assert!(v.as_object().unwrap().get("columns").is_none(), "got: {}", v);
+    assert_eq!(v["columns"], serde_json::json!({
+        "summary": ["region", "total"],
+        "details": ["id", "note"]
+    }));
 
     let data = v["data"].as_array().expect("data should be an array");
-    assert_eq!(data[0]["fields"], serde_json::json!(["region", "total"]));
-    assert_eq!(data[1]["fields"], serde_json::json!(["id", "note"]));
+    for block in data {
+        assert!(block.get("fields").is_none(), "got: {}", v);
+    }
 }
 
 #[test]
@@ -565,28 +574,31 @@ fn json_mode_single_sheet_has_no_columns_map() {
     assert!(out.status.success());
     let v = parse_json(&stdout(&out));
     assert!(v.as_object().unwrap().get("columns").is_none(), "got: {}", v);
+    assert_eq!(v["fields"], serde_json::json!(["sku", "name", "price", "qty", "in_stock"]));
 }
 
 #[test]
-fn exclude_cells_flag_drops_row_values_but_keeps_fields_in_json_mode() {
+fn exclude_cells_flag_drops_row_values_but_keeps_columns_in_json_mode() {
     // Regression: --exclude-cells only ever affected the plain-text output path --
     // combined with --json it was silently ignored and full row data was still printed.
     let path = fixture("multi_sheet.xlsx");
 
-    // multi-sheet: each sheet block keeps "sheet"/"row_count"/"fields" but drops "rows"
+    // multi-sheet: top-level "columns" survives cells being excluded; "data" is replaced
+    // entirely by a {sheet_key: row_count} "row_counts" map -- no rows, no fields (both
+    // already covered elsewhere), just the one number per sheet that "data" would
+    // otherwise carry inside a needless {sheet, row_count} wrapper.
     let out = run(&["--json", "-p", "-x", path.to_str().unwrap()]);
     assert!(out.status.success());
     let v = parse_json(&stdout(&out));
-    // per-sheet "fields" is still there (nested in "data") even with cells excluded
-    let data = v["data"].as_array().unwrap();
-    assert_eq!(data[0]["fields"], serde_json::json!(["region", "total"]));
-    assert_eq!(data[1]["fields"], serde_json::json!(["id", "note"]));
-    assert_eq!(data.len(), 2);
-    for block in data {
-        assert!(block.get("rows").is_none(), "got: {}", v);
-        assert!(block.get("fields").is_some());
-        assert!(block.get("row_count").is_some());
-    }
+    assert_eq!(v["columns"], serde_json::json!({
+        "summary": ["region", "total"],
+        "details": ["id", "note"]
+    }));
+    assert_eq!(v["row_counts"], serde_json::json!({
+        "summary": 3,
+        "details": 3
+    }));
+    assert!(v.as_object().unwrap().get("data").is_none(), "got: {}", v);
 
     // single-sheet: "data" would always be an empty array here, so it's omitted entirely
     let path = fixture("products.xlsx");

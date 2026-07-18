@@ -47,15 +47,19 @@ This is especially handy when a header is genuinely unwieldy to reference by nam
   - `--keys "start_date|date"` casts `start_date` to a date, keeping its natural name
   - `--keys "start_date:start|date"` renames `start_date` to `start` and casts it to a date
   - `--keys "start_date:start|date,total_price:total"` does both of the above, and renames `total_price` to `total` with no format change
-- ```--max, -m``` max number of rows
+- ```--max, -m``` max number of rows *per sheet*. This is the only row-count cap there is -- with `--preview`, every worksheet in the file is always included, `--max`/`-m` just limits how many rows come back from each one (default 10 under `--preview`, see below)
 - ```--header-row, -t``` row index used for the header row, if it is not the first row. This is only applicable to spreadsheets and useful if the top rows contain headers or descriptions
 - ```--omit-header``` skip the header and assign columns to letters (a, b, c, d .... z, aa, ab etc..)
 - ```--colstyle, -c```: overrides the fallback column-naming convention for columns without a usable header, in the form ```style[:mode]```. `style` is `a1` for spreadsheet-style letters (`a`, `b`, ... `z`, `aa`, `ab`, ...) or `c01`/`n`/`r1`/`r1c1` for zero-padded numbers (`c01`, `c02`, ...) -- `r1`/`r1c1` are accepted as aliases for `c01` since that's a more familiar convention if you're used to R1C1-style spreadsheet references. The zero-padding width scales with the sheet's total column count, so keys sort correctly regardless of width: `c01`..`c99` under 100 columns, `c001`..`c999` from 100 up to 1,000, `c0001`..`c9999` from 1,000 up to 10,000. `mode` controls whether this replaces *every* column's name or only fills in for columns lacking a real header: `all` (or the default when `:mode` is omitted entirely, e.g. `-c c01`) renames every column, matching what you'd see as column letters in a spreadsheet app; anything else (e.g. `-c a1:auto`) only applies to columns without their own header text, leaving named columns alone.
 - ```--deferred, -d``` For large files: streams rows straight to a `.jsonl` file one at a time rather than holding them all in memory (the file is always plain JSON Lines, one object per line -- there's no "standard JSON array" mode for `--deferred`, since that would need to buffer the whole result to know where to put the closing bracket, defeating the point). By default the file goes to a random-UUID filename under `EXPORT_FILE_DIRECTORY` (a `.env` variable, default `./`); use `--output`/`-o` to name it yourself. **On Linux and macOS**, this also hands the export off to a detached background process and returns control to the shell immediately, rather than blocking until the whole file is processed -- worth it once you're talking millions of rows; for a few thousand it'll finish before you'd notice either way. Prints `exporting to {path} in the background (see {path}.log for progress and errors)` (or `{"output_reference": ..., "log_file": ..., "background": true}` with `--json`) right away. Since there's no terminal attached to the background process by the time it finishes (or fails), check `{path}.log` afterward to confirm it completed -- there's no other way to be notified. **On Windows** (or anywhere else non-Unix), `--deferred` falls back to the same in-process, streamed-but-blocking behavior it always had -- still memory-efficient, just not backgrounded.
 - ```--output, -o``` export file path for `--deferred`; overrides the random UUID filename. Creates any missing parent directories. Has no effect without `--deferred`.
 - ```--json, -j``` Formats JSON output as indented, multi-line JSON. Does not change *what* gets printed -- that's still up to `--rows`/`--lines` (or neither) exactly as without `--json`; see [Using with jq](#using-with-jq) below
-- ```--preview, -p``` sample up to 10 rows from *every* worksheet, not just the selected one (each sheet gets its own 10-row cap, so a workbook with several sheets can return more than 10 rows in total). With `--json`, sheet names throughout the output (`sheets`, `selected_sheet`, and each sheet's `sheet` key) are shown snake_cased -- the same form `--sheet` matches against, so whatever's displayed can be pasted straight back in. Each sheet's own field names are under its `fields` key in `data`, e.g. `.data[].fields`.
-- ```--exclude-cells, -x``` a structural overview of the worksheet(s) -- sheet names, row counts, column/field names -- with no actual cell/row *values*. With `--json`, `data` is omitted entirely for a single sheet (it would always be `[]`), or keeps each sheet's `sheet`/`row_count`/`fields` while dropping `rows` (multi-sheet, typically combined with `--preview`). Without `--json`, prints the configured options instead (unchanged, pre-existing behavior). Example for a quick multi-sheet overview: `spread-cli -px --json workbook.xlsx | jq '.data[] | {sheet, fields}'`.
+- ```--preview, -p``` **which sheets get read**: switches to multi-sheet mode and samples up to `--max`/`-m` rows (default 10) from *every* worksheet, not just the selected one -- `--sheet`/`--index` are ignored in this mode, since the whole point is to see every sheet at once. A workbook with several sheets can therefore return more than 10 rows in total, since each sheet gets its own cap. With `--json`, sheet names throughout the output (`sheets`, and each sheet's `sheet` key) are shown snake_cased -- the same form `--sheet` matches against, so whatever's displayed can be pasted straight back in. Field names for every sheet are collected into a top-level `columns` map (`{sheet_key: [field_names]}`) instead of the single-sheet `fields` array; each worksheet's own row count and rows live under `data`, one block per sheet.
+- ```--exclude-cells, -x``` **whether cell values are included**: drops row *data* from the result while keeping everything structural -- sheet names, row counts, column/field names -- with no actual cell values. It has two effective shapes, depending on whether `--preview` is also set:
+  - `-x` alone: a **single-sheet preview**. Only the one selected (or default) sheet is read, same as without `-x`; `data` is simply omitted from `--json` output, since it would always be `[]`. Field names still come back as the usual top-level `fields` array.
+  - `-x` combined with `--preview` (`-xp`): effectively becomes a **multi-sheet preview** -- every worksheet is read structurally (name, row count, field names), with no cell data at all. Since every sheet's fields already live in the top-level `columns` map (see `--preview` above), a `fields` array would just be a redundant copy of one sheet's entry in `columns` -- so it's dropped from the output entirely in this mode. Handy for large multi-sheet files with many worksheets (a common shape for spreadsheets published by statistics agencies) where you want to know what's in the file before deciding what to actually pull out of it.
+  
+  Without `--json`, `-x` prints the configured options instead (unchanged, pre-existing behavior). Example for a quick multi-sheet overview: `spread-cli -px --json workbook.xlsx | jq '.columns'`.
 - ```--rows, -r``` print just the data rows (no parsing metadata), as a JSON array
 - ```--lines, -l``` JSON lines: one compact JSON object per row, with no surrounding array (JSONL/NDJSON). Implies `--rows` on its own -- no need to pass both -- and if you do, `--lines` wins
 - ```--euro-number-format```: convert European-style decimal commas, when converting from formatted strings to numbers
@@ -64,7 +68,7 @@ This is especially handy when a header is genuinely unwieldy to reference by nam
 
 ## Using with `jq` (or `yq`)
 
-`--json` output is plain, standard JSON, so anything that reads JSON works -- these examples use `jq`, but `yq` (which speaks jq-like syntax and can read JSON directly, or convert it to YAML with `-o yaml`) works just as well: `spread-cli -p --json workbook.xlsx | yq -p json -o yaml '.data[].fields'`.
+`--json` output is plain, standard JSON, so anything that reads JSON works -- these examples use `jq`, but `yq` (which speaks jq-like syntax and can read JSON directly, or convert it to YAML with `-o yaml`) works just as well: `spread-cli -p --json workbook.xlsx | yq -p json -o yaml '.columns'`.
 
 `--json` is a *formatting* flag, not a mode switch: it makes JSON output properly indented and multi-line, without changing which content gets printed. What gets printed is still decided by `--rows`/`--lines` (or neither) exactly as without `--json`:
 
@@ -76,11 +80,17 @@ This is especially handy when a header is genuinely unwieldy to reference by nam
 # full result: metadata (extension, sheets, row_count, fields, ...) + data together
 spread-cli --json sales.xlsx | jq '.data[] | {sku, price}'
 spread-cli --json sales.xlsx | jq 'del(.data)'                    # metadata only
-spread-cli --json --preview workbook.xlsx | jq '.data[] | {sheet, row_count}'  # every sheet
+
+# --preview (-p): every worksheet, not just the selected one -- field names for every
+# sheet come back in the top-level "columns" map, rows come back per-sheet under "data"
+spread-cli --json --preview workbook.xlsx | jq '.columns'                     # {sheet: [fields], ...}
+spread-cli --json --preview workbook.xlsx | jq '.data[] | {sheet, row_count}' # every sheet's row count
 
 # -px (--preview --exclude-cells) --json: a quick structural overview of every worksheet
-# in a workbook with no row data at all -- just sheet names, row counts, and fields.
-spread-cli -px --json workbook.xlsx | jq '.data[] | {sheet, fields}'
+# in a workbook with no row data at all -- just sheet names, row counts, and columns.
+# Ideal for large multi-sheet files (e.g. statistics-agency spreadsheets) where you want
+# to see what's in the workbook before deciding what to actually pull out of it.
+spread-cli -px --json workbook.xlsx | jq '.columns'
 spread-cli -px --json workbook.xlsx | jq '.data[] | {sheet, row_count}'
 
 # -r --json (or the bundled short form -rj): just the rows, as a pretty-printed array --

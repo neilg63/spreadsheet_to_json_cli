@@ -44,7 +44,8 @@ async fn main() -> ExitCode {
     }
   };
 
-  if let Err(msg) = validate_path(args.path.as_deref()) {
+  // args.path is guaranteed Some at this point -- the None case returns early above
+  if let Err(msg) = validate_path(args.path.as_deref().unwrap()) {
     print_error(args.json, &msg);
     return ExitCode::from(2);
   }
@@ -207,10 +208,9 @@ fn print_debug_timing(debug_mode: bool, start: Option<Instant>, to_stderr: bool)
 /// Catch the common, easy-to-explain failure cases (missing file, wrong extension)
 /// before touching the filesystem any further, so no temp file is created and
 /// the user gets a plain-English reason instead of an internal error code.
-fn validate_path(path_opt: Option<&str>) -> Result<(), String> {
-  let Some(path_str) = path_opt else {
-    return Err("no spreadsheet file specified. Usage: spreadsheet-to-json-cli [OPTIONS] <PATH>".to_string());
-  };
+/// Only ever called once a path is known to be present -- a missing path shows
+/// help instead, before this is reached.
+fn validate_path(path_str: &str) -> Result<(), String> {
   let path = Path::new(path_str);
   if !path.exists() {
     return Err(format!("file not found: {}", path.display()));
@@ -239,12 +239,14 @@ fn print_error(json_mode: bool, msg: &str) {
   }
 }
 
-/// One JSON block per sheet: {"sheet", "row_count", "fields", "rows"} (or without "rows"
-/// when `include_rows` is false, for --exclude-cells). Used both by the full --json
-/// object's "data" field and directly by the rows-only (-r/-l) path when --preview is
-/// active -- multimode results have no single flat row list to hand back
-/// (data_set.rows()/to_vec() only ever return the *first* sheet's rows), so rows-only
-/// mode needs this same per-sheet shape rather than silently dropping every other sheet.
+/// One JSON block per sheet: {"sheet", "row_count", "rows"} (or without "rows" when
+/// `include_rows` is false, for --exclude-cells). Field names aren't repeated here --
+/// they live once each in the top-level "columns" map (see multimode_columns) rather
+/// than duplicated into every sheet block. Used both by the full --json object's "data"
+/// field and directly by the rows-only (-r/-l) path when --preview is active --
+/// multimode results have no single flat row list to hand back (data_set.rows()/to_vec()
+/// only ever return the *first* sheet's rows), so rows-only mode needs this same
+/// per-sheet shape rather than silently dropping every other sheet.
 ///
 /// "sheet" is the snake_cased key (sheet.key()), not the raw sheet name (sheet.name()):
 /// that's the form --sheet actually matches against, so what's displayed is always
@@ -255,17 +257,39 @@ fn multimode_sheet_blocks(result: &ResultSet, include_rows: bool) -> Vec<Value> 
       json!({
         "sheet": sheet.key(),
         "row_count": sheet.num_rows,
-        "fields": sheet.keys,
         "rows": sheet.rows
       })
     } else {
       json!({
         "sheet": sheet.key(),
-        "row_count": sheet.num_rows,
-        "fields": sheet.keys
+        "row_count": sheet.num_rows
       })
     }
   }).collect()
+}
+
+/// {sheet_key: [field_names]} for every worksheet -- the multi-sheet generalization of
+/// the top-level "fields" array. This is the one place field/column names live for a
+/// multi-sheet (--preview) result; per-sheet blocks under "data" carry row counts and
+/// row data instead, not a repeated copy of the same names.
+fn multimode_columns(result: &ResultSet) -> Value {
+  let mut columns: IndexMap<String, Value> = IndexMap::new();
+  for sheet in result.data.sheets() {
+    columns.insert(sheet.key(), json!(sheet.keys));
+  }
+  json!(columns)
+}
+
+/// {sheet_key: row_count} for every worksheet -- used instead of "data" when --preview
+/// is combined with --exclude-cells. With no row values and no per-sheet fields (already
+/// in "columns") left to show, a {sheet, row_count} array under "data" is more ceremony
+/// than the one number per sheet it actually carries, so it collapses to a plain map.
+fn multimode_row_counts(result: &ResultSet) -> Value {
+  let mut counts: IndexMap<String, Value> = IndexMap::new();
+  for sheet in result.data.sheets() {
+    counts.insert(sheet.key(), json!(sheet.num_rows));
+  }
+  json!(counts)
 }
 
 /// Builds the single structured JSON object emitted by --json, covering every
@@ -293,7 +317,14 @@ fn build_json_result(result: &ResultSet, opts: &OptionSet, exclude_cells: bool) 
     }
   }
   out.insert("row_count".to_string(), json!(result.num_rows));
-  out.insert("fields".to_string(), json!(result.keys));
+  if result.multimode() {
+    // "columns" is the multi-sheet generalization of "fields" -- one field-name list
+    // per worksheet, since a single top-level "fields" would only ever be able to show
+    // the first sheet's columns.
+    out.insert("columns".to_string(), multimode_columns(result));
+  } else {
+    out.insert("fields".to_string(), json!(result.keys));
+  }
   out.insert("multimode".to_string(), json!(result.multimode()));
   if is_workbook
     && result.selected.is_some() {
@@ -311,7 +342,13 @@ fn build_json_result(result: &ResultSet, opts: &OptionSet, exclude_cells: bool) 
   }
 
   if result.multimode() {
-    out.insert("data".to_string(), json!(multimode_sheet_blocks(result, !exclude_cells)));
+    if exclude_cells {
+      // no row values, no per-sheet fields (already in "columns") -- "data" collapses to
+      // a plain {sheet_key: row_count} map rather than an array of near-empty objects.
+      out.insert("row_counts".to_string(), multimode_row_counts(result));
+    } else {
+      out.insert("data".to_string(), json!(multimode_sheet_blocks(result, true)));
+    }
   } else if !exclude_cells {
     out.insert("data".to_string(), json!(result.to_vec()));
   }
