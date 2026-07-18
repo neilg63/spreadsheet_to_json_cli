@@ -12,66 +12,134 @@ const DEFAULT_MAX_FOR_PREVIEW: u32 = 10;
 
 /// Command line arguments configuration
 #[derive(Parser, Debug)]
-#[clap(author, version, about, long_about = None)]
+#[clap(
+  author,
+  version,
+  about,
+  long_about = "Converts spreadsheets (xlsx, xlsm, xls, xlsb, ods) and CSV/TSV files to JSON, \
+    JSON Lines, or plain text, with control over which sheet(s), rows, columns, and field \
+    names/types come out the other end. Designed to pipe straight into jq/yq -- see \
+    https://github.com/neilg63/spreadsheet_to_json_cli for the full README.",
+  after_help = "EXAMPLES:\n    \
+    spread-cli sales.xlsx                        Read the first sheet as JSON\n    \
+    spread-cli sales.xlsx -s Q1 -r               Just the rows from the sheet named \"Q1\"\n    \
+    spread-cli sales.xlsx -n 2                    Read the 2nd sheet (1-based)\n    \
+    spread-cli big.csv -d -o out.jsonl            Stream a large CSV to a JSONL file in the background\n    \
+    spread-cli workbook.xlsx -px --json | jq .columns   Structural overview of every worksheet\n\n\
+    Run with no arguments (or no PATH) to see this help again."
+)]
 pub struct Args {
-  
-  #[clap(short, long, value_parser) ]
+
+  #[clap(short, long, value_parser, help = "Sheet name to select (case-insensitive, ignores spaces/punctuation); falls back to the first sheet if unmatched") ]
   pub sheet: Option<String>,
 
-  #[clap(short, long, value_parser, default_value_t = 0)]
+  #[clap(short, long, value_parser, default_value_t = 0, help = "Sheet index, 0-based (0 is the first sheet)")]
   pub index: u32,
 
-  // 1-based sheet number, as opposed to --index's 0-based position -- for matching what
-  // you'd count off in a spreadsheet app ("the 3rd sheet") without the usual off-by-one.
-  // Not -n: too easily confused with a line/row count.
-  #[clap(short = 'w', long, value_parser, conflicts_with = "index")]
-  pub workbook: Option<u32>,
+  #[clap(
+    short = 'n', long, value_parser, conflicts_with = "index",
+    help = "Sheet number, 1-based (1 is the first sheet) -- same as --index but 1-based",
+    long_help = "Sheet number, 1-based (1 is the first sheet). Equivalent to --index but \
+      1-based, for matching how you'd count sheets off in a spreadsheet app (\"the 3rd \
+      sheet\") without the usual off-by-one. `-n 1` is the same as `-i 0` (or `-s sheet1`, \
+      if the first sheet happens to be named \"sheet1\"). Cannot be combined with --index."
+  ) ]
+  pub number: Option<u32>,
 
+  #[clap(help = "Path to the source spreadsheet or CSV/TSV file")]
   pub path: Option<String>,
 
-  #[clap(short = 'k', long, value_parser) ]
+  #[clap(
+    short = 'k', long, value_parser,
+    help = "Column overrides: source_key[:new_key][|format[|default]], comma-separated",
+    long_help = "Comma-separated list of column overrides, each in the form \
+      source_key[:new_key][|format[|default]]. source_key is matched against the column's \
+      natural (auto-detected, snake_cased) header key wherever that column actually is, so \
+      you only need to list the columns you want to change; an unmatched source_key is \
+      silently ignored. Omit :new_key to change only the format/default and keep the \
+      natural name. Examples: \"start_date|date\" casts start_date to a date; \
+      \"start_date:start|date\" also renames it to start; \"a:b|int,c:d|text\" mixes \
+      multiple overrides in one value."
+  ) ]
   pub keys: Option<String>,
 
-  #[clap(short, long, value_parser) ]
+  #[clap(short, long, value_parser, help = "Maximum number of rows to return (per sheet, when combined with --preview)") ]
   pub max: Option<u32>,
 
-  #[clap(short = 't', long, value_parser, default_value_t = 0) ]
+  #[clap(short = 't', long, value_parser, default_value_t = 0, help = "Row index used as the header row, if the headers aren't on the first row") ]
   pub header_row: u8,
 
-  #[clap(long, value_parser, default_value_t = false) ]
+  #[clap(long, value_parser, default_value_t = false, help = "Skip the header row; assign fallback keys (a, b, c... or c01, c02... -- see --colstyle) instead") ]
   pub omit_header: bool, // no short flag: -o is --output's
 
-  #[clap(short = 'x',long, value_parser, default_value_t = false) ]
-  pub exclude_cells: bool, // test validity only and show options
+  #[clap(
+    short = 'x', long, value_parser, default_value_t = false,
+    help = "Structural overview only: sheet names, row counts, field names -- no cell values",
+    long_help = "Drops row *data* from the result while keeping everything structural -- \
+      sheet names, row counts, column/field names -- with no actual cell values. Alone, it \
+      just omits an always-empty \"data\" array from --json output for the single selected \
+      sheet. Combined with --preview (-xp), it surveys the whole workbook: every sheet's \
+      name, field names (\"columns\"), and row count (\"row_counts\"), with zero cell data \
+      -- handy for large multi-sheet files (e.g. statistics-agency spreadsheets) where you \
+      want to see what's in the file before deciding what to pull out of it."
+  ) ]
+  pub exclude_cells: bool,
 
-  #[clap(short = 'd',long, value_parser, default_value_t = false) ]
-  pub deferred: bool, // test validity only and show options
+  #[clap(
+    short = 'd', long, value_parser, default_value_t = false,
+    help = "Stream rows to a JSONL export file instead of returning them directly (for large files)",
+    long_help = "For large files: streams rows straight to a .jsonl file one at a time \
+      rather than holding them all in memory. The file defaults to a random-UUID filename \
+      under EXPORT_FILE_DIRECTORY (a .env variable, default ./); use --output/-o to name it \
+      yourself. On Linux and macOS, this also hands the export off to a detached background \
+      process and returns control to the shell immediately; on Windows it falls back to the \
+      same in-process, streamed-but-blocking behavior, still memory-efficient, just not \
+      backgrounded."
+  ) ]
+  pub deferred: bool,
 
-  #[clap(short = 'p',long, value_parser, default_value_t = false) ]
-  pub preview: bool, // show preview only
+  #[clap(
+    short = 'p', long, value_parser, default_value_t = false,
+    help = "Sample rows from every worksheet (multi-sheet mode), not just the selected one",
+    long_help = "Switches to multi-sheet mode and samples up to --max/-m rows (default 10) \
+      from *every* worksheet, not just the selected one -- --sheet/--index/--number are \
+      ignored in this mode. Field names for every sheet come back in a top-level \"columns\" \
+      map instead of a single \"fields\" array; each worksheet's own row count and rows live \
+      under \"data\", one block per sheet."
+  ) ]
+  pub preview: bool,
 
-  #[clap(short = 'l', long, value_parser, default_value_t = false) ]
-  pub lines: bool, // debug mode
+  #[clap(short = 'l', long, value_parser, default_value_t = false, help = "Output JSON Lines: one compact JSON object per row, no surrounding array (implies --rows)") ]
+  pub lines: bool,
 
-  #[clap(short = 'r', long, value_parser, default_value_t = false) ]
-  pub rows: bool, // debug mode
+  #[clap(short = 'r', long, value_parser, default_value_t = false, help = "Output just the data rows, as a JSON array, with no metadata wrapper") ]
+  pub rows: bool,
 
-  #[clap(long, value_parser, default_value_t = false) ]
-  pub debug: bool, // debug mode
+  #[clap(long, value_parser, default_value_t = false, help = "Print processing time, and extra diagnostic detail on error") ]
+  pub debug: bool,
 
-  #[clap(short = 'c', long, value_parser) ]
-  pub colstyle: Option<String>, // debug mode
+  #[clap(
+    short = 'c', long, value_parser,
+    help = "Fallback naming style for columns with no usable header: a1 or c01[:mode]",
+    long_help = "Overrides the fallback column-naming convention for columns without a \
+      usable header, in the form style[:mode]. style is a1 for spreadsheet-style letters \
+      (a, b, ... z, aa, ab, ...) or c01/n/r1/r1c1 for zero-padded numbers (c01, c02, ...). \
+      mode controls whether this replaces *every* column's name (\"all\", or the default \
+      when :mode is omitted) or only fills in for columns lacking a real header (anything \
+      else, e.g. \"a1:auto\")."
+  ) ]
+  pub colstyle: Option<String>,
 
-  #[clap(short = 'j', long, value_parser, default_value_t = false) ]
-  pub json: bool, // single structured JSON object covering every query mode, for piping to jq
+  #[clap(short = 'j', long, value_parser, default_value_t = false, help = "Format JSON output as indented, multi-line JSON") ]
+  pub json: bool,
 
-  #[clap(short = 'o', long, value_parser) ]
-  pub output: Option<String>, // export file path for --deferred; overrides the random UUID filename
+  #[clap(short = 'o', long, value_parser, help = "Export file path for --deferred (overrides the random UUID filename); has no effect without --deferred") ]
+  pub output: Option<String>,
 
-  #[clap(long, value_parser, default_value_t = false) ]
+  #[clap(long, value_parser, default_value_t = false, help = "Format date-time columns as dates only, with no time component") ]
   pub date_only: bool,
 
-  #[clap(long, value_parser, default_value_t = false)]
+  #[clap(long, value_parser, default_value_t = false, help = "Parse decimal commas when converting formatted strings to numbers") ]
   pub euro_number_format: bool,
 
   // Internal: set when this invocation IS the detached background worker spawned by a
@@ -174,13 +242,13 @@ impl FromArgs for OptionSet {
     } else {
         args.max
     };
-    // --workbook/-w is 1-based ("the 1st sheet"); the core library only knows --index's
-    // 0-based position, so this is just --workbook - 1 wherever it's set. --index and
-    // --workbook are mutually exclusive (see conflicts_with above), so there's no
+    // --number/-n is 1-based ("the 1st sheet"); the core library only knows --index's
+    // 0-based position, so this is just --number - 1 wherever it's set. --index and
+    // --number are mutually exclusive (see conflicts_with above), so there's no
     // precedence to resolve between them.
-    let index = match args.workbook {
-        Some(0) => return Err("invalid --workbook value: workbooks are numbered starting at 1".to_string()),
-        Some(w) => w - 1,
+    let index = match args.number {
+        Some(0) => return Err("invalid --number value: sheets are numbered starting at 1".to_string()),
+        Some(n) => n - 1,
         None => args.index,
     };
     Ok(OptionSet {

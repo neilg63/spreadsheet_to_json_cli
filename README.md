@@ -43,7 +43,7 @@ This is especially handy when a header is genuinely unwieldy to reference by nam
 - ```path``` Local path on the file system to the source spreadsheet
 - ```--sheet, -s``` case-insensitive sheet name ignoring spaces and punctuation
 - ```--index, -i``` sheet index (0 is the first) for spreadsheets
-- ```--workbook, -w``` sheet number (1 is the first) -- the same as `--index` but 1-based, for matching how you'd count sheets off in a spreadsheet app ("the 3rd sheet") without the usual off-by-one. `-w 1` is the same as `-i 0` (or `-s sheet1`, if the first sheet happens to be named "sheet1" -- `--sheet` is case-insensitive). Cannot be combined with `--index` -- they're two ways of saying the same thing, so passing both is rejected rather than silently picking one.
+- ```--number, -n``` sheet number (1 is the first) -- the same as `--index` but 1-based, for matching how you'd count sheets off in a spreadsheet app ("the 3rd sheet") without the usual off-by-one. `-n 1` is the same as `-i 0` (or `-s sheet1`, if the first sheet happens to be named "sheet1" -- `--sheet` is case-insensitive). Cannot be combined with `--index` -- they're two ways of saying the same thing, so passing both is rejected rather than silently picking one.
 - ```--keys, -k```: comma-separated list of column overrides, each in the form ```source_key[:new_key][|format[|default]]```. `source_key` is matched against the column's natural (auto-detected, snake_cased) header key wherever that column actually is, so you only need to list the columns you want to change. A `source_key` that doesn't match any column in the file is silently ignored. Omit `:new_key` to change only the format/default and keep the natural name. A single `--keys` value can mix and match several overrides, comma-separated:
   - `--keys "start_date|date"` casts `start_date` to a date, keeping its natural name
   - `--keys "start_date:start|date"` renames `start_date` to `start` and casts it to a date
@@ -69,7 +69,7 @@ This is especially handy when a header is genuinely unwieldy to reference by nam
   Without `--json`, `-x` prints the configured options instead (unchanged, pre-existing behavior). Example for a quick multi-sheet overview: `spread-cli -px --json workbook.xlsx | jq '{columns, row_counts}'`.
 - ```--rows, -r``` print just the data rows (no parsing metadata), as a JSON array
 - ```--lines, -l``` JSON lines: one compact JSON object per row, with no surrounding array (JSONL/NDJSON). Implies `--rows` on its own -- no need to pass both -- and if you do, `--lines` wins
-- ```--euro-number-format```: convert European-style decimal commas, when converting from formatted strings to numbers
+- ```--euro-number-format```: convert decimal commas, when converting from formatted strings to numbers
 - ```--date-only``` date-times columns are processed as dates only by default, unless overridden
 - ```--debug``` prints processing time and, on error, extra diagnostic detail (the raw internal error code plus the options that were applied). This is CLI-side timing only -- there's no such thing as "debug mode" in the underlying spreadsheet-to-json library. It never writes to stdout when the output is JSON: with the full `--json` object it's added as a real `processing_time_ms` field instead; with `-r --json`/`-l` (both bare arrays or JSONL) it goes to stderr, since there's no metadata slot to embed it in without breaking those shapes.
 
