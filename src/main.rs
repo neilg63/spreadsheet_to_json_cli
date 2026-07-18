@@ -335,6 +335,7 @@ fn build_json_result(result: &ResultSet, opts: &OptionSet, exclude_cells: bool) 
   out.insert("mode".to_string(), json!(opts.row_mode()));
   out.insert("headers".to_string(), json!(opts.header_mode()));
   out.insert("header_row".to_string(), json!(opts.header_row));
+  out.insert("data_row_index".to_string(), json!(opts.data_row_index));
   out.insert("decimal_separator".to_string(), json!(opts.rows.decimal_separator()));
   out.insert("date_mode".to_string(), json!(opts.rows.date_mode()));
   if let Some(out_ref) = &result.out_ref {

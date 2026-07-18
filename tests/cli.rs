@@ -461,6 +461,66 @@ fn keys_flag_with_format_override_does_not_leak_header_row() {
 }
 
 #[test]
+fn body_start_skips_gap_between_header_row_and_real_data() {
+    // header_gap.xlsx: row 0 title, row 1 notes, row 2 header ("sku", "qty"), row 3
+    // blank, rows 4-5 real data.
+    let path = fixture("header_gap.xlsx");
+
+    // baseline: -t alone (no --body-start) captures the blank gap row as data
+    let out = run(&["-l", "-t", "3", path.to_str().unwrap()]);
+    assert!(out.status.success());
+    let rows = parse_jsonl_rows(&stdout(&out));
+    assert_eq!(rows.len(), 3, "gap row plus SKU001/SKU002");
+    assert_eq!(rows[0]["sku"], serde_json::Value::Null);
+
+    // --body-start skips the gap row entirely
+    let out = run(&["-l", "-t", "3", "-b", "5", path.to_str().unwrap()]);
+    assert!(out.status.success());
+    let rows = parse_jsonl_rows(&stdout(&out));
+    assert_eq!(rows.len(), 2, "just SKU001 and SKU002");
+    assert_eq!(rows[0]["sku"], "SKU001");
+    assert_eq!(rows[0]["qty"], 10.0);
+    assert_eq!(rows[1]["sku"], "SKU002");
+}
+
+#[test]
+fn header_index_and_body_index_are_zero_based_equivalents() {
+    // --header-index/--body-index are the 0-based direct-passthrough forms of
+    // --top/--body-start (1-based) -- -t 3 -b 5 and --header-index 2 --body-index 4
+    // should produce identical output.
+    let path = fixture("header_gap.xlsx");
+    let out_one_based = run(&["-l", "-t", "3", "-b", "5", path.to_str().unwrap()]);
+    let out_zero_based = run(&["-l", "--header-index", "2", "--body-index", "4", path.to_str().unwrap()]);
+    assert!(out_one_based.status.success());
+    assert!(out_zero_based.status.success());
+    assert_eq!(stdout(&out_one_based), stdout(&out_zero_based));
+}
+
+#[test]
+fn top_and_body_start_reject_zero_and_conflict_with_index_variants() {
+    let path = fixture("header_gap.xlsx");
+
+    // rows are numbered starting at 1 -- 0 is invalid
+    let out = run(&["-t", "0", path.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("rows are numbered starting at 1"), "got: {}", stderr(&out));
+
+    let out = run(&["-b", "0", path.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("rows are numbered starting at 1"), "got: {}", stderr(&out));
+
+    // --top/--header-index and --body-start/--body-index are each two ways of saying the
+    // same thing -- passing both sides of a pair is rejected rather than silently picking one
+    let out = run(&["-t", "1", "--header-index", "0", path.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("cannot be used with"), "got: {}", stderr(&out));
+
+    let out = run(&["-b", "1", "--body-index", "0", path.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("cannot be used with"), "got: {}", stderr(&out));
+}
+
+#[test]
 fn keys_flag_casts_genuine_excel_date_cell_to_date_only() {
     // A cell Excel itself formats as a plain "Date" (custom number format "yyyy-mm-dd",
     // no time shown) is still stored internally as the same datetime serial value as any
@@ -528,7 +588,8 @@ fn json_mode_single_sheet_has_expected_shape() {
     assert_eq!(v["max_rows"], 2);
     assert_eq!(v["mode"], "JSON");
     assert_eq!(v["headers"], "capture");
-    assert_eq!(v["header_row"], 0);
+    // null (not 0) by default -- the header row is auto-detected, not assumed to be row 0
+    assert_eq!(v["header_row"], serde_json::Value::Null);
     assert_eq!(v["decimal_separator"], ".");
     assert_eq!(v["date_mode"], "date/time");
 

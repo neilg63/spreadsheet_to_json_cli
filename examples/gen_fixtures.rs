@@ -9,6 +9,7 @@ fn main() -> Result<(), rust_xlsxwriter::XlsxError> {
     gen_multi_sheet()?;
     gen_date_only()?;
     gen_wide_columns();
+    gen_header_gap()?;
     Ok(())
 }
 
@@ -101,4 +102,24 @@ fn gen_wide_columns() {
     let row = (1..=num_cols).map(|i| format!("v{}", i)).collect::<Vec<_>>().join(",");
     std::fs::write("tests/fixtures/wide_columns.csv", format!("{}\n{}\n", header, row))
         .expect("failed to write tests/fixtures/wide_columns.csv");
+}
+
+/// A layout common to real-world spreadsheets (e.g. statistics-agency publications): a
+/// title row, a notes row, the real header row, then a blank gap row before the actual
+/// data -- for testing --header-row/--data-row. Row 0 "Report Title", row 1 "Generated
+/// 2026-01-01", row 2 header ("sku", "qty"), row 3 blank, rows 4-5 data.
+fn gen_header_gap() -> Result<(), rust_xlsxwriter::XlsxError> {
+    let mut workbook = Workbook::new();
+    let sheet = workbook.add_worksheet().set_name("Sheet1")?;
+    sheet.write_string(0, 0, "Report Title")?;
+    sheet.write_string(1, 0, "Generated 2026-01-01")?;
+    sheet.write_string(2, 0, "sku")?;
+    sheet.write_string(2, 1, "qty")?;
+    sheet.write_string(4, 0, "SKU001")?;
+    sheet.write_number(4, 1, 10.0)?;
+    sheet.write_string(5, 0, "SKU002")?;
+    sheet.write_number(5, 1, 20.0)?;
+
+    workbook.save("tests/fixtures/header_gap.xlsx")?;
+    Ok(())
 }

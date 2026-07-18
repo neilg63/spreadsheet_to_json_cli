@@ -4,7 +4,7 @@ use clap::Parser;
 use spreadsheet_to_json::heck::ToSnakeCase;
 use spreadsheet_to_json::serde_json::{Number, Value};
 use spreadsheet_to_json::FieldNameMode;
-use spreadsheet_to_json::{is_truthy::*, options::{Column, OptionSet}, Format, ReadMode};
+use spreadsheet_to_json::{is_truthy::*, options::{Column, DateTimeMode, OptionSet}, Format, ReadMode};
 use simple_string_patterns::{SimpleMatch, StripCharacters};
 use to_segments::ToSegments;
 
@@ -66,8 +66,52 @@ pub struct Args {
   #[clap(short, long, value_parser, help = "Maximum number of rows to return (per sheet, when combined with --preview)") ]
   pub max: Option<u32>,
 
-  #[clap(short = 't', long, value_parser, default_value_t = 0, help = "Row index used as the header row, if the headers aren't on the first row") ]
-  pub header_row: u8,
+  #[clap(
+    short = 't', long, value_parser, conflicts_with = "header_index",
+    help = "Header row number, 1-based (1 is the first row) -- if the headers aren't on the first row",
+    long_help = "Header row number, 1-based (1 is the first row), if the headers aren't \
+      on the first row. Equivalent to --header-index but 1-based, for matching the row \
+      numbers you'd see in a spreadsheet app. `-t 1` is the same as `--header-index 0` \
+      (both mean \"the first row\"). Cannot be combined with --header-index. If neither \
+      is given, the header row is guessed automatically from the sheet's own layout \
+      (title/notes rows are detected and skipped)."
+  ) ]
+  pub top: Option<u32>,
+
+  #[clap(
+    long, value_parser,
+    help = "Header row index, 0-based (0 is the first row) -- same as --top but 0-based",
+    long_help = "Header row index, 0-based (0 is the first row), if the headers aren't \
+      on the first row. Equivalent to --top but 0-based -- this is the raw value passed \
+      straight through to the underlying library's OptionSet.header_row. Cannot be \
+      combined with --top. If neither is given, the header row is guessed automatically \
+      from the sheet's own layout (title/notes rows are detected and skipped)."
+  ) ]
+  pub header_index: Option<u32>,
+
+  #[clap(
+    short = 'b', long, value_parser, conflicts_with = "body_index",
+    help = "Row number, 1-based, where actual data begins -- if there's a gap below the header row",
+    long_help = "Row number, 1-based, where actual data begins, if there's a gap below \
+      the header row -- e.g. a blank or subtitle row before the real data starts. Rows \
+      between the header row and this one are skipped entirely -- neither captured as \
+      headers nor as data. Equivalent to --body-index but 1-based. Defaults to \
+      immediately after the header row when unset. Setting it equal to the header row is \
+      valid -- e.g. a CSV with predefined/external headers (via --keys) and \
+      --omit-header, where no line is consumed as a header at all; only a value strictly \
+      before the header row is rejected and falls back to the default. Cannot be \
+      combined with --body-index."
+  ) ]
+  pub body_start: Option<u32>,
+
+  #[clap(
+    long, value_parser, conflicts_with = "body_start",
+    help = "Row index, 0-based, where actual data begins -- same as --body-start but 0-based",
+    long_help = "Row index, 0-based, where actual data begins -- same as --body-start but \
+      0-based. This is the raw value passed straight through to the underlying library's \
+      OptionSet.data_row_index. Cannot be combined with --body-start."
+  ) ]
+  pub body_index: Option<u32>,
 
   #[clap(long, value_parser, default_value_t = false, help = "Skip the header row; assign fallback keys (a, b, c... or c01, c02... -- see --colstyle) instead") ]
   pub omit_header: bool, // no short flag: -o is --output's
@@ -139,6 +183,15 @@ pub struct Args {
   #[clap(long, value_parser, default_value_t = false, help = "Format date-time columns as dates only, with no time component") ]
   pub date_only: bool,
 
+  #[clap(long, value_parser, default_value_t = false, help = "Format date-time columns as times only, with no date component (--date-only wins if both are set)") ]
+  pub time_only: bool,
+
+  #[clap(long, value_parser, default_value_t = false, help = "Format date-time columns as hours:minutes only, discarding seconds and any date component (--date-only/--time-only win if set too)") ]
+  pub hm_only: bool,
+
+  #[clap(long, value_parser, default_value_t = false, help = "Format date-time columns without milliseconds or a trailing Z, e.g. 2026-07-18T18:07:34 (--date-only/--time-only/--hm-only win if set too)") ]
+  pub simple: bool,
+
   #[clap(long, value_parser, default_value_t = false, help = "Parse decimal commas when converting formatted strings to numbers") ]
   pub euro_number_format: bool,
 
@@ -206,7 +259,7 @@ impl FromArgs for OptionSet {
           };
         }
 
-        columns.push(Column::from_source_key_with_format(&source_key, new_key.as_deref(), fmt, default_val, false, false));
+        columns.push(Column::from_source_key_with_format(&source_key, new_key.as_deref(), fmt, default_val, DateTimeMode::Full, false));
       }
     }
     let read_mode = if args.preview {
@@ -251,16 +304,54 @@ impl FromArgs for OptionSet {
         Some(n) => n - 1,
         None => args.index,
     };
+    // Same 1-based/0-based pairing as --number/--index, but for the header row: --top is
+    // 1-based, --header-index is the library's own 0-based OptionSet.header_row directly.
+    // Unlike --index (which always has a concrete default), leaving *both* unset here
+    // stays None -- that's what tells the library to auto-detect the header row instead
+    // of assuming row 0.
+    let header_row = match (args.top, args.header_index) {
+        (Some(0), _) => return Err("invalid --top value: rows are numbered starting at 1".to_string()),
+        (Some(t), _) => Some((t - 1) as usize),
+        (None, Some(hi)) => Some(hi as usize),
+        (None, None) => None,
+    };
+    // --body-start (1-based) / --body-index (0-based) map to OptionSet.data_row_index the
+    // same way. Unlike --index/--number, both sides are optional here -- None means
+    // "unset", matching data_row_index's own Option<usize>.
+    let data_row_index = match (args.body_start, args.body_index) {
+        (Some(0), _) => return Err("invalid --body-start value: rows are numbered starting at 1".to_string()),
+        (Some(b), _) => Some((b - 1) as usize),
+        (None, Some(bi)) => Some(bi as usize),
+        (None, None) => None,
+    };
+    // --date-only/--time-only/--hm-only are mutually exclusive row-wide defaults,
+    // checked in this order of precedence when more than one is somehow set.
+    let datetime_mode = if args.date_only {
+        DateTimeMode::DateOnly
+    } else if args.time_only {
+        DateTimeMode::TimeOnly
+    } else if args.hm_only {
+        DateTimeMode::HmOnly
+    } else if args.simple {
+        DateTimeMode::Simple
+    } else {
+        DateTimeMode::Full
+    };
     Ok(OptionSet {
         selected,
         indices: vec![index],
         path: args.path.clone(),
         max,
-        header_row: args.header_row,
+        header_row,
+        data_row_index,
+        // spread-cli's own default UX: guess the header/data row from the sheet's layout
+        // when neither --top/--header-index nor --body-start/--body-index is given,
+        // rather than the library's own plain "assume row 0" default.
+        detect_header: true,
         omit_header: args.omit_header,
         rows: crate::RowOptionSet {
             decimal_comma: args.euro_number_format,
-            date_only: args.date_only,
+            datetime_mode,
             columns,
         },
         jsonl,
