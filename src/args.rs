@@ -20,7 +20,13 @@ pub struct Args {
 
   #[clap(short, long, value_parser, default_value_t = 0)]
   pub index: u32,
-  
+
+  // 1-based sheet number, as opposed to --index's 0-based position -- for matching what
+  // you'd count off in a spreadsheet app ("the 3rd sheet") without the usual off-by-one.
+  // Not -n: too easily confused with a line/row count.
+  #[clap(short = 'w', long, value_parser, conflicts_with = "index")]
+  pub workbook: Option<u32>,
+
   pub path: Option<String>,
 
   #[clap(short = 'k', long, value_parser) ]
@@ -168,9 +174,18 @@ impl FromArgs for OptionSet {
     } else {
         args.max
     };
+    // --workbook/-w is 1-based ("the 1st sheet"); the core library only knows --index's
+    // 0-based position, so this is just --workbook - 1 wherever it's set. --index and
+    // --workbook are mutually exclusive (see conflicts_with above), so there's no
+    // precedence to resolve between them.
+    let index = match args.workbook {
+        Some(0) => return Err("invalid --workbook value: workbooks are numbered starting at 1".to_string()),
+        Some(w) => w - 1,
+        None => args.index,
+    };
     Ok(OptionSet {
         selected,
-        indices: vec![args.index],
+        indices: vec![index],
         path: args.path.clone(),
         max,
         header_row: args.header_row,

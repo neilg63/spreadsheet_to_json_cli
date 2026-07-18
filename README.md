@@ -43,6 +43,7 @@ This is especially handy when a header is genuinely unwieldy to reference by nam
 - ```path``` Local path on the file system to the source spreadsheet
 - ```--sheet, -s``` case-insensitive sheet name ignoring spaces and punctuation
 - ```--index, -i``` sheet index (0 is the first) for spreadsheets
+- ```--workbook, -w``` sheet number (1 is the first) -- the same as `--index` but 1-based, for matching how you'd count sheets off in a spreadsheet app ("the 3rd sheet") without the usual off-by-one. `-w 1` is the same as `-i 0` (or `-s sheet1`, if the first sheet happens to be named "sheet1" -- `--sheet` is case-insensitive). Cannot be combined with `--index` -- they're two ways of saying the same thing, so passing both is rejected rather than silently picking one.
 - ```--keys, -k```: comma-separated list of column overrides, each in the form ```source_key[:new_key][|format[|default]]```. `source_key` is matched against the column's natural (auto-detected, snake_cased) header key wherever that column actually is, so you only need to list the columns you want to change. A `source_key` that doesn't match any column in the file is silently ignored. Omit `:new_key` to change only the format/default and keep the natural name. A single `--keys` value can mix and match several overrides, comma-separated:
   - `--keys "start_date|date"` casts `start_date` to a date, keeping its natural name
   - `--keys "start_date:start|date"` renames `start_date` to `start` and casts it to a date
@@ -57,9 +58,15 @@ This is especially handy when a header is genuinely unwieldy to reference by nam
 - ```--preview, -p``` **which sheets get read**: switches to multi-sheet mode and samples up to `--max`/`-m` rows (default 10) from *every* worksheet, not just the selected one -- `--sheet`/`--index` are ignored in this mode, since the whole point is to see every sheet at once. A workbook with several sheets can therefore return more than 10 rows in total, since each sheet gets its own cap. With `--json`, sheet names throughout the output (`sheets`, and each sheet's `sheet` key) are shown snake_cased -- the same form `--sheet` matches against, so whatever's displayed can be pasted straight back in. Field names for every sheet are collected into a top-level `columns` map (`{sheet_key: [field_names]}`) instead of the single-sheet `fields` array; each worksheet's own row count and rows live under `data`, one block per sheet.
 - ```--exclude-cells, -x``` **whether cell values are included**: drops row *data* from the result while keeping everything structural -- sheet names, row counts, column/field names -- with no actual cell values. It has two effective shapes, depending on whether `--preview` is also set:
   - `-x` alone: a **single-sheet preview**. Only the one selected (or default) sheet is read, same as without `-x`; `data` is simply omitted from `--json` output, since it would always be `[]`. Field names still come back as the usual top-level `fields` array.
-  - `-x` combined with `--preview` (`-xp`): effectively becomes a **multi-sheet preview** -- every worksheet is read structurally (name, row count, field names), with no cell data at all. Since every sheet's fields already live in the top-level `columns` map (see `--preview` above), a `fields` array would just be a redundant copy of one sheet's entry in `columns` -- so it's dropped from the output entirely in this mode. Handy for large multi-sheet files with many worksheets (a common shape for spreadsheets published by statistics agencies) where you want to know what's in the file before deciding what to actually pull out of it.
-  
-  Without `--json`, `-x` prints the configured options instead (unchanged, pre-existing behavior). Example for a quick multi-sheet overview: `spread-cli -px --json workbook.xlsx | jq '.columns'`.
+  - `-x` combined with `--preview` (`-xp`): effectively becomes a **multi-sheet preview** -- every worksheet is read structurally (name, row count, field names), with no cell data at all. Since every sheet's fields already live in the top-level `columns` map (see `--preview` above), a `fields` array would just be a redundant copy of one sheet's entry in `columns` -- so it's dropped from the output entirely in this mode. `data` is replaced by `row_counts`, a plain `{sheet_key: row_count}` map -- with no rows and no fields left to carry, an array of `{sheet, row_count}` objects under `data` would be more ceremony than the one number per sheet it actually holds. Handy for large multi-sheet files with many worksheets (a common shape for spreadsheets published by statistics agencies) where you want to know what's in the file before deciding what to actually pull out of it:
+    ```json
+    {
+      "columns": { "sheet_1": ["col_1", "col_2", "col_3"], "sheet_2": ["col_a", "col_b"] },
+      "row_counts": { "sheet_1": 9876, "sheet_2": 34 }
+    }
+    ```
+
+  Without `--json`, `-x` prints the configured options instead (unchanged, pre-existing behavior). Example for a quick multi-sheet overview: `spread-cli -px --json workbook.xlsx | jq '{columns, row_counts}'`.
 - ```--rows, -r``` print just the data rows (no parsing metadata), as a JSON array
 - ```--lines, -l``` JSON lines: one compact JSON object per row, with no surrounding array (JSONL/NDJSON). Implies `--rows` on its own -- no need to pass both -- and if you do, `--lines` wins
 - ```--euro-number-format```: convert European-style decimal commas, when converting from formatted strings to numbers
@@ -87,11 +94,12 @@ spread-cli --json --preview workbook.xlsx | jq '.columns'                     # 
 spread-cli --json --preview workbook.xlsx | jq '.data[] | {sheet, row_count}' # every sheet's row count
 
 # -px (--preview --exclude-cells) --json: a quick structural overview of every worksheet
-# in a workbook with no row data at all -- just sheet names, row counts, and columns.
-# Ideal for large multi-sheet files (e.g. statistics-agency spreadsheets) where you want
-# to see what's in the workbook before deciding what to actually pull out of it.
+# in a workbook with no row data at all -- just sheet names, field names ("columns") and
+# row counts ("row_counts"), each a {sheet_key: ...} map. Ideal for large multi-sheet
+# files (e.g. statistics-agency spreadsheets) where you want to see what's in the
+# workbook before deciding what to actually pull out of it.
 spread-cli -px --json workbook.xlsx | jq '.columns'
-spread-cli -px --json workbook.xlsx | jq '.data[] | {sheet, row_count}'
+spread-cli -px --json workbook.xlsx | jq '.row_counts'
 
 # -r --json (or the bundled short form -rj): just the rows, as a pretty-printed array --
 # no metadata wrapper. Single-letter flags can be bundled like this wherever it's handy.

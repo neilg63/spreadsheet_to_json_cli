@@ -340,6 +340,40 @@ fn sheet_selection_by_index() {
 }
 
 #[test]
+fn sheet_selection_by_workbook_number_is_index_plus_one() {
+    // --workbook/-w is 1-based, --index/-i is 0-based -- -w 2 and -i 1 should be
+    // identical (both select the "Details" sheet).
+    let path = fixture("multi_sheet.xlsx");
+    let out_workbook = run(&["-l", "-w", "2", path.to_str().unwrap()]);
+    let out_index = run(&["-l", "-i", "1", path.to_str().unwrap()]);
+    assert!(out_workbook.status.success());
+    assert!(out_index.status.success());
+    assert_eq!(stdout(&out_workbook), stdout(&out_index));
+
+    // -w 1 selects the first sheet, same as the default (no -w/-i at all)
+    let out_workbook_1 = run(&["-l", "-w", "1", path.to_str().unwrap()]);
+    let out_default = run(&["-l", path.to_str().unwrap()]);
+    assert!(out_workbook_1.status.success());
+    assert_eq!(stdout(&out_workbook_1), stdout(&out_default));
+}
+
+#[test]
+fn workbook_flag_rejects_zero_and_conflicts_with_index() {
+    let path = fixture("multi_sheet.xlsx");
+
+    // workbooks are numbered starting at 1 -- 0 is invalid, not "the first sheet"
+    let out = run(&["-w", "0", path.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("workbooks are numbered starting at 1"), "got: {}", stderr(&out));
+
+    // --workbook and --index are two ways of saying the same thing -- passing both is
+    // ambiguous, so clap rejects it outright rather than silently picking one
+    let out = run(&["-w", "1", "-i", "0", path.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("cannot be used with"), "got: {}", stderr(&out));
+}
+
+#[test]
 fn preview_mode_lists_every_sheet() {
     let path = fixture("multi_sheet.xlsx");
     let out = run(&["-p", path.to_str().unwrap()]);
