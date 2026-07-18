@@ -268,7 +268,7 @@ fn multimode_sheet_blocks(result: &ResultSet, include_rows: bool) -> Vec<Value> 
   }).collect()
 }
 
-/// {sheet_key: [field_names]} for every worksheet -- the multi-sheet generalization of
+/// `{sheet_key: [field_names]}` for every worksheet -- the multi-sheet generalization of
 /// the top-level "fields" array. This is the one place field/column names live for a
 /// multi-sheet (--preview) result; per-sheet blocks under "data" carry row counts and
 /// row data instead, not a repeated copy of the same names.
