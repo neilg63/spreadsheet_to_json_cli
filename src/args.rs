@@ -79,6 +79,23 @@ pub struct Args {
   pub omit_header: bool, // no short flag: -o is --output's
 
   #[clap(
+    short = 'p', long, value_parser, default_value_t = false,
+    help = "Sample rows from every worksheet (multi-sheet mode), not just the selected one",
+    long_help = "Switches to multi-sheet mode and samples up to --max/-m rows (default 10) \
+      from *every* worksheet, not just the selected one -- --sheet/--index/--number are \
+      ignored in this mode. Field names for every sheet come back in a top-level \"columns\" \
+      map instead of a single \"fields\" array; each worksheet's own row count and rows live \
+      under \"data\", one block per sheet."
+  ) ]
+  pub preview: bool,
+
+  #[clap(short = 'l', long, value_parser, default_value_t = false, help = "Output JSON Lines: one compact JSON object per row, no surrounding array (implies --rows)") ]
+  pub lines: bool,
+
+  #[clap(short = 'r', long, value_parser, default_value_t = false, help = "Output just the data rows, as a JSON array, with no metadata wrapper") ]
+  pub rows: bool,
+
+  #[clap(
     short = 'x', long, value_parser, default_value_t = false,
     help = "Structural overview only: sheet names, row counts, field names -- no cell values",
     long_help = "Drops row *data* from the result while keeping everything structural -- \
@@ -133,22 +150,8 @@ pub struct Args {
   ) ]
   pub deferred: bool,
 
-  #[clap(
-    short = 'p', long, value_parser, default_value_t = false,
-    help = "Sample rows from every worksheet (multi-sheet mode), not just the selected one",
-    long_help = "Switches to multi-sheet mode and samples up to --max/-m rows (default 10) \
-      from *every* worksheet, not just the selected one -- --sheet/--index/--number are \
-      ignored in this mode. Field names for every sheet come back in a top-level \"columns\" \
-      map instead of a single \"fields\" array; each worksheet's own row count and rows live \
-      under \"data\", one block per sheet."
-  ) ]
-  pub preview: bool,
-
-  #[clap(short = 'l', long, value_parser, default_value_t = false, help = "Output JSON Lines: one compact JSON object per row, no surrounding array (implies --rows)") ]
-  pub lines: bool,
-
-  #[clap(short = 'r', long, value_parser, default_value_t = false, help = "Output just the data rows, as a JSON array, with no metadata wrapper") ]
-  pub rows: bool,
+  #[clap(short = 'o', long, value_parser, help = "Export file path for --deferred (overrides the random UUID filename); has no effect without --deferred") ]
+  pub output: Option<String>,
 
     // Indexed options
   #[clap(short, long, value_parser, default_value_t = 0, help = "Sheet index, 0-based (0 is the first sheet), same as --number but 0-based") ]
