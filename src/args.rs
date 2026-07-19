@@ -33,6 +33,39 @@ pub struct Args {
   #[clap(help = "Path to the source spreadsheet or CSV/TSV file")]
   pub path: Option<String>,
 
+  #[clap(
+    short = 'p', long, value_parser, default_value_t = false,
+    help = "Sample rows from every worksheet (multi-sheet mode), not just the selected one",
+    long_help = "Switches to multi-sheet mode and samples up to --max/-m rows (default 10) \
+      from *every* worksheet, not just the selected one -- --sheet/--index/--number are \
+      ignored in this mode. Field names for every sheet come back in a top-level \"columns\" \
+      map instead of a single \"fields\" array; each worksheet's own row count and rows live \
+      under \"data\", one block per sheet."
+  ) ]
+  pub preview: bool,
+
+  #[clap(short = 'r', long, value_parser, default_value_t = false, help = "Output just the data rows, as a JSON array, with no metadata wrapper") ]
+  pub rows: bool,
+
+  #[clap(short = 'l', long, value_parser, default_value_t = false, help = "Output JSON Lines: one compact JSON object per row, no surrounding array (implies --rows)") ]
+  pub lines: bool,
+
+  #[clap(
+    short = 'x', long, value_parser, default_value_t = false,
+    help = "Structural overview only: sheet names, row counts, field names -- no cell values",
+    long_help = "Drops row *data* from the result while keeping a structural overview with \
+      sheet names, row counts, column/field names -- with no actual cell values. Alone, it \
+      just omits an always-empty \"data\" array from --json output for the single selected \
+      sheet. Combined with --preview (-xp), it surveys the whole workbook: every sheet's \
+      name, field names (\"columns\"), and row count (\"row_counts\"), with zero cell data \
+      -- handy for large multi-sheet files (e.g. statistics-agency spreadsheets) where you \
+      want to see what's in the file before deciding what to pull out of it."
+  ) ]
+  pub exclude_cells: bool,
+
+  #[clap(short = 'j', long, value_parser, default_value_t = false, help = "Format JSON output as indented, multi-line JSON") ]
+  pub json: bool,
+
   #[clap(short, long, value_parser, help = "Sheet name to select (case-insensitive, ignores spaces/punctuation); falls back to the first sheet if unmatched") ]
   pub sheet: Option<String>,
 
@@ -79,36 +112,6 @@ pub struct Args {
   pub omit_header: bool, // no short flag: -o is --output's
 
   #[clap(
-    short = 'p', long, value_parser, default_value_t = false,
-    help = "Sample rows from every worksheet (multi-sheet mode), not just the selected one",
-    long_help = "Switches to multi-sheet mode and samples up to --max/-m rows (default 10) \
-      from *every* worksheet, not just the selected one -- --sheet/--index/--number are \
-      ignored in this mode. Field names for every sheet come back in a top-level \"columns\" \
-      map instead of a single \"fields\" array; each worksheet's own row count and rows live \
-      under \"data\", one block per sheet."
-  ) ]
-  pub preview: bool,
-
-  #[clap(short = 'l', long, value_parser, default_value_t = false, help = "Output JSON Lines: one compact JSON object per row, no surrounding array (implies --rows)") ]
-  pub lines: bool,
-
-  #[clap(short = 'r', long, value_parser, default_value_t = false, help = "Output just the data rows, as a JSON array, with no metadata wrapper") ]
-  pub rows: bool,
-
-  #[clap(
-    short = 'x', long, value_parser, default_value_t = false,
-    help = "Structural overview only: sheet names, row counts, field names -- no cell values",
-    long_help = "Drops row *data* from the result while keeping everything structural -- \
-      sheet names, row counts, column/field names -- with no actual cell values. Alone, it \
-      just omits an always-empty \"data\" array from --json output for the single selected \
-      sheet. Combined with --preview (-xp), it surveys the whole workbook: every sheet's \
-      name, field names (\"columns\"), and row count (\"row_counts\"), with zero cell data \
-      -- handy for large multi-sheet files (e.g. statistics-agency spreadsheets) where you \
-      want to see what's in the file before deciding what to pull out of it."
-  ) ]
-  pub exclude_cells: bool,
-
-  #[clap(
     short = 'k', long, value_parser,
     help = "Column overrides: source_key[:new_key][|format[|default]], comma-separated",
     long_help = "Comma-separated list of column overrides, each in the form \
@@ -133,9 +136,6 @@ pub struct Args {
       else, e.g. \"a1:auto\")."
   ) ]
   pub colstyle: Option<String>,
-
-  #[clap(short = 'j', long, value_parser, default_value_t = false, help = "Format JSON output as indented, multi-line JSON") ]
-  pub json: bool,
 
   #[clap(
     short = 'd', long, value_parser, default_value_t = false,
