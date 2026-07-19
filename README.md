@@ -72,7 +72,7 @@ spread-cli my-spreadsheet.xlsx -c a1 --keys "a:first_name,b:last_name,c:salary,d
 - ```-o, --output``` export file path for `-d`; has no effect without it
 - ```-j, --json``` outputs one valid, indented JSON object/array for the full result -- see [Quick start](#quick-start) above for why this matters
 - ```-p, --preview``` reads every worksheet (up to `-m` rows each, default 10) instead of just one -- `-s`/`-n` are ignored in this mode. Field names for every sheet come back in a top-level `columns` map; each sheet's rows live under `data`.
-- ```-x, --exclude-cells``` drops row values, keeping only structure -- sheet names, row counts, field names. Combine with `-p` (`-xp`) for a full-workbook overview with no cell data at all: `columns` (fields per sheet) and `row_counts` (rows per sheet), no `data` key. See [Quick start](#quick-start).
+- ```-x, --overview``` drops row values, keeping only structure -- sheet names, row counts, field names. Combine with `-p` (`-xp`) for a full-workbook overview with no cell data at all: `columns` (fields per sheet) and `row_counts` (rows per sheet), no `data` key. See [Quick start](#quick-start). (Also accepted as `--exclude-cells`, its original name.)
 - ```-r, --rows``` just the data rows, as a JSON array, no metadata wrapper
 - ```-l, --lines``` JSON Lines: one compact object per row, no wrapper -- implies `-r`
 - ```--euro-number-format```: parse decimal commas when converting formatted strings to numbers

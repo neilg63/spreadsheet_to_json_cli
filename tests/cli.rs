@@ -734,6 +734,32 @@ fn exclude_cells_flag_drops_row_values_but_keeps_columns_in_json_mode() {
 }
 
 #[test]
+fn overview_flag_is_the_visible_name_exclude_cells_a_hidden_alias() {
+    // --overview replaced --exclude-cells as the primary, more approachable long name;
+    // --exclude-cells keeps working (a hidden clap alias) so existing scripts don't break,
+    // it just no longer shows up in --help. -x, --overview, and --exclude-cells must all
+    // produce identical output.
+    let path = fixture("products.xlsx");
+    let short = run(&["--json", "-x", path.to_str().unwrap()]);
+    let overview = run(&["--json", "--overview", path.to_str().unwrap()]);
+    let legacy = run(&["--json", "--exclude-cells", path.to_str().unwrap()]);
+    assert!(short.status.success());
+    assert!(overview.status.success());
+    assert!(legacy.status.success());
+    assert_eq!(stdout(&short), stdout(&overview));
+    assert_eq!(stdout(&short), stdout(&legacy));
+
+    // --exclude-cells stays functional, and the long_help text says as much for anyone
+    // who knew it by that name -- but it's not listed as a flag name of its own; the
+    // header line advertises only -x, --overview.
+    let help = run(&["--help"]);
+    let help_text = stdout(&help);
+    let header_line = help_text.lines().find(|l| l.trim_start().starts_with("-x,"))
+        .unwrap_or_else(|| panic!("no -x flag header line found, got: {}", help_text));
+    assert_eq!(header_line.trim(), "-x, --overview");
+}
+
+#[test]
 fn json_mode_combined_with_rows_prints_only_rows_pretty_printed() {
     // --json must not override -r's "rows only" output mode -- it should only change
     // how those rows get formatted (indented, multi-line) instead of switching to the

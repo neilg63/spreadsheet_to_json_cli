@@ -51,7 +51,7 @@ pub struct Args {
   pub lines: bool,
 
   #[clap(
-    short = 'x', long, value_parser, default_value_t = false,
+    short = 'x', long = "overview", alias = "exclude-cells", value_parser, default_value_t = false,
     help = "Structural overview only: sheet names, row counts, field names -- no cell values",
     long_help = "Drops row *data* from the result while keeping a structural overview with \
       sheet names, row counts, column/field names -- with no actual cell values. Alone, it \
@@ -59,7 +59,8 @@ pub struct Args {
       sheet. Combined with --preview (-xp), it surveys the whole workbook: every sheet's \
       name, field names (\"columns\"), and row count (\"row_counts\"), with zero cell data \
       -- handy for large multi-sheet files (e.g. statistics-agency spreadsheets) where you \
-      want to see what's in the file before deciding what to pull out of it."
+      want to see what's in the file before deciding what to pull out of it. (Also accepted \
+      as --exclude-cells, its original, more literal name.)"
   ) ]
   pub exclude_cells: bool,
 
