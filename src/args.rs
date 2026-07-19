@@ -30,11 +30,11 @@ const DEFAULT_MAX_FOR_PREVIEW: u32 = 10;
 )]
 pub struct Args {
 
+  #[clap(help = "Path to the source spreadsheet or CSV/TSV file")]
+  pub path: Option<String>,
+
   #[clap(short, long, value_parser, help = "Sheet name to select (case-insensitive, ignores spaces/punctuation); falls back to the first sheet if unmatched") ]
   pub sheet: Option<String>,
-
-  #[clap(short, long, value_parser, default_value_t = 0, help = "Sheet index, 0-based (0 is the first sheet)")]
-  pub index: u32,
 
   #[clap(
     short = 'n', long, value_parser, conflicts_with = "index",
@@ -46,22 +46,8 @@ pub struct Args {
   ) ]
   pub number: Option<u32>,
 
-  #[clap(help = "Path to the source spreadsheet or CSV/TSV file")]
-  pub path: Option<String>,
-
-  #[clap(
-    short = 'k', long, value_parser,
-    help = "Column overrides: source_key[:new_key][|format[|default]], comma-separated",
-    long_help = "Comma-separated list of column overrides, each in the form \
-      source_key[:new_key][|format[|default]]. source_key is matched against the column's \
-      natural (auto-detected, snake_cased) header key wherever that column actually is, so \
-      you only need to list the columns you want to change; an unmatched source_key is \
-      silently ignored. Omit :new_key to change only the format/default and keep the \
-      natural name. Examples: \"start_date|date\" casts start_date to a date; \
-      \"start_date:start|date\" also renames it to start; \"a:b|int,c:d|text\" mixes \
-      multiple overrides in one value."
-  ) ]
-  pub keys: Option<String>,
+  #[clap(short, long, value_parser, default_value_t = 0, help = "Sheet index, 0-based (0 is the first sheet)")]
+  pub index: u32,
 
   #[clap(short, long, value_parser, help = "Maximum number of rows to return (per sheet, when combined with --preview)") ]
   pub max: Option<u32>,
@@ -128,6 +114,20 @@ pub struct Args {
       want to see what's in the file before deciding what to pull out of it."
   ) ]
   pub exclude_cells: bool,
+
+  #[clap(
+    short = 'k', long, value_parser,
+    help = "Column overrides: source_key[:new_key][|format[|default]], comma-separated",
+    long_help = "Comma-separated list of column overrides, each in the form \
+      source_key[:new_key][|format[|default]]. source_key is matched against the column's \
+      natural (auto-detected, snake_cased) header key wherever that column actually is, so \
+      you only need to list the columns you want to change; an unmatched source_key is \
+      silently ignored. Omit :new_key to change only the format/default and keep the \
+      natural name. Examples: \"start_date|date\" casts start_date to a date; \
+      \"start_date:start|date\" also renames it to start; \"a:b|int,c:d|text\" mixes \
+      multiple overrides in one value."
+  ) ]
+  pub keys: Option<String>,
 
   #[clap(
     short = 'd', long, value_parser, default_value_t = false,
