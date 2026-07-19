@@ -38,16 +38,13 @@ pub struct Args {
 
   #[clap(
     short = 'n', long, value_parser, conflicts_with = "index",
-    help = "Sheet number, 1-based (1 is the first sheet) -- same as --index but 1-based",
+    help = "Sheet number, 1-based",
     long_help = "Sheet number, 1-based (1 is the first sheet). Equivalent to --index but \
       1-based, for matching how you'd count sheets off in a spreadsheet app (\"the 3rd \
       sheet\") without the usual off-by-one. `-n 1` is the same as `-i 0` (or `-s sheet1`, \
       if the first sheet happens to be named \"sheet1\"). Cannot be combined with --index."
   ) ]
   pub number: Option<u32>,
-
-  #[clap(short, long, value_parser, default_value_t = 0, help = "Sheet index, 0-based (0 is the first sheet)")]
-  pub index: u32,
 
   #[clap(short, long, value_parser, help = "Maximum number of rows to return (per sheet, when combined with --preview)") ]
   pub max: Option<u32>,
@@ -63,18 +60,6 @@ pub struct Args {
       (title/notes rows are detected and skipped)."
   ) ]
   pub top: Option<u32>,
-
-  #[clap(
-    long, value_parser,
-    help = "Header row index, 0-based (0 is the first row) -- same as --top but 0-based",
-    long_help = "Header row index, 0-based (0 is the first row), if the headers aren't \
-      on the first row. Equivalent to --top but 0-based -- this is the raw value passed \
-      straight through to the underlying library's OptionSet.header_row. Cannot be \
-      combined with --top. If neither is given, the header row is guessed automatically \
-      from the sheet's own layout (title/notes rows are detected and skipped)."
-  ) ]
-  pub header_index: Option<u32>,
-
   #[clap(
     short = 'b', long, value_parser, conflicts_with = "body_index",
     help = "Row number, 1-based, where actual data begins -- if there's a gap below the header row",
@@ -89,15 +74,6 @@ pub struct Args {
       combined with --body-index."
   ) ]
   pub body_start: Option<u32>,
-
-  #[clap(
-    long, value_parser, conflicts_with = "body_start",
-    help = "Row index, 0-based, where actual data begins -- same as --body-start but 0-based",
-    long_help = "Row index, 0-based, where actual data begins -- same as --body-start but \
-      0-based. This is the raw value passed straight through to the underlying library's \
-      OptionSet.data_row_index. Cannot be combined with --body-start."
-  ) ]
-  pub body_index: Option<u32>,
 
   #[clap(long, value_parser, default_value_t = false, help = "Skip the header row; assign fallback keys (a, b, c... or c01, c02... -- see --colstyle) instead") ]
   pub omit_header: bool, // no short flag: -o is --output's
@@ -130,6 +106,21 @@ pub struct Args {
   pub keys: Option<String>,
 
   #[clap(
+    short = 'c', long, value_parser,
+    help = "Fallback naming style for columns with no usable header: a1 or c01[:mode]",
+    long_help = "Overrides the fallback column-naming convention for columns without a \
+      usable header, in the form style[:mode]. style is a1 for spreadsheet-style letters \
+      (a, b, ... z, aa, ab, ...) or c01/n/r1/r1c1 for zero-padded numbers (c01, c02, ...). \
+      mode controls whether this replaces *every* column's name (\"all\", or the default \
+      when :mode is omitted) or only fills in for columns lacking a real header (anything \
+      else, e.g. \"a1:auto\")."
+  ) ]
+  pub colstyle: Option<String>,
+
+  #[clap(short = 'j', long, value_parser, default_value_t = false, help = "Format JSON output as indented, multi-line JSON") ]
+  pub json: bool,
+
+  #[clap(
     short = 'd', long, value_parser, default_value_t = false,
     help = "Stream rows to a JSONL export file instead of returning them directly (for large files)",
     long_help = "For large files: streams rows straight to a .jsonl file one at a time \
@@ -159,26 +150,31 @@ pub struct Args {
   #[clap(short = 'r', long, value_parser, default_value_t = false, help = "Output just the data rows, as a JSON array, with no metadata wrapper") ]
   pub rows: bool,
 
-  #[clap(long, value_parser, default_value_t = false, help = "Print processing time, and extra diagnostic detail on error") ]
-  pub debug: bool,
+    // Indexed options
+  #[clap(short, long, value_parser, default_value_t = 0, help = "Sheet index, 0-based (0 is the first sheet), same as --number but 0-based") ]
+  pub index: u32,
+  #[clap(
+    long, value_parser,
+    help = "Header row index, 0-based (0 is the first row) -- same as --top but 0-based",
+    long_help = "Header row index, 0-based (0 is the first row), if the headers aren't \
+      on the first row. Equivalent to --top but 0-based -- this is the raw value passed \
+      straight through to the underlying library's OptionSet.header_row. Cannot be \
+      combined with --top. If neither is given, the header row is guessed automatically \
+      from the sheet's own layout (title/notes rows are detected and skipped)."
+  ) ]
+  pub header_index: Option<u32>,
 
   #[clap(
-    short = 'c', long, value_parser,
-    help = "Fallback naming style for columns with no usable header: a1 or c01[:mode]",
-    long_help = "Overrides the fallback column-naming convention for columns without a \
-      usable header, in the form style[:mode]. style is a1 for spreadsheet-style letters \
-      (a, b, ... z, aa, ab, ...) or c01/n/r1/r1c1 for zero-padded numbers (c01, c02, ...). \
-      mode controls whether this replaces *every* column's name (\"all\", or the default \
-      when :mode is omitted) or only fills in for columns lacking a real header (anything \
-      else, e.g. \"a1:auto\")."
+    long, value_parser, conflicts_with = "body_start",
+    help = "Row index, 0-based, where actual data begins -- same as --body-start but 0-based",
+    long_help = "Row index, 0-based, where actual data begins -- same as --body-start but \
+      0-based. This is the raw value passed straight through to the underlying library's \
+      OptionSet.data_row_index. Cannot be combined with --body-start."
   ) ]
-  pub colstyle: Option<String>,
+  pub body_index: Option<u32>,
 
-  #[clap(short = 'j', long, value_parser, default_value_t = false, help = "Format JSON output as indented, multi-line JSON") ]
-  pub json: bool,
-
-  #[clap(short = 'o', long, value_parser, help = "Export file path for --deferred (overrides the random UUID filename); has no effect without --deferred") ]
-  pub output: Option<String>,
+  #[clap(long, value_parser, default_value_t = false, help = "Print processing time, and extra diagnostic detail on error") ]
+  pub debug: bool,
 
   #[clap(long, value_parser, default_value_t = false, help = "Format date-time columns as dates only, with no time component") ]
   pub date_only: bool,
