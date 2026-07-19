@@ -334,8 +334,16 @@ fn build_json_result(result: &ResultSet, opts: &OptionSet, exclude_cells: bool) 
   out.insert("max_rows".to_string(), json!(opts.max_rows()));
   out.insert("mode".to_string(), json!(opts.row_mode()));
   out.insert("headers".to_string(), json!(opts.header_mode()));
-  out.insert("header_row".to_string(), json!(opts.header_row));
-  out.insert("data_row_index".to_string(), json!(opts.data_row_index));
+  // header_row/body_start are the resolved 1-based row numbers -- matching --top/
+  // --body-start's own friendly, 1-based terminology -- actually used for this read,
+  // whether from an explicit override or auto-detection; header_index/body_index are
+  // their 0-based equivalents, matching --header-index/--body-index. Reading these off
+  // `result` (not `opts`) is what makes this correct: `opts.header_row`/`.data_row_index`
+  // only ever reflect an explicit override and stay unset whenever detection ran instead.
+  out.insert("header_row".to_string(), json!(result.header_row_index.map(|idx| idx + 1)));
+  out.insert("header_index".to_string(), json!(result.header_row_index));
+  out.insert("body_start".to_string(), json!(result.body_start_index + 1));
+  out.insert("body_index".to_string(), json!(result.body_start_index));
   out.insert("decimal_separator".to_string(), json!(opts.rows.decimal_separator()));
   out.insert("date_mode".to_string(), json!(opts.rows.date_mode()));
   if let Some(out_ref) = &result.out_ref {

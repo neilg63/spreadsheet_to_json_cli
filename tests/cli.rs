@@ -484,6 +484,24 @@ fn body_start_skips_gap_between_header_row_and_real_data() {
 }
 
 #[test]
+fn json_mode_reports_auto_detected_header_row_and_body_start() {
+    // Regression: --json's header_row/body_start used to just echo back
+    // opts.header_row/opts.data_row_index, which stay null/unset whenever detection (not
+    // an explicit --top/--body-start override) resolved them -- so the reported metadata
+    // showed null even though the file was read correctly using row 3 as the header and
+    // row 5 as the first data row. No --top/--body-start given here: auto-detection alone
+    // must resolve and report the same values as the explicit -t 3 -b 5 case above.
+    let path = fixture("header_gap.xlsx");
+    let out = run(&["--json", path.to_str().unwrap()]);
+    assert!(out.status.success());
+    let v = parse_json(&stdout(&out));
+    assert_eq!(v["header_row"], 3);
+    assert_eq!(v["header_index"], 2);
+    assert_eq!(v["body_start"], 5);
+    assert_eq!(v["body_index"], 4);
+}
+
+#[test]
 fn header_index_and_body_index_are_zero_based_equivalents() {
     // --header-index/--body-index are the 0-based direct-passthrough forms of
     // --top/--body-start (1-based) -- -t 3 -b 5 and --header-index 2 --body-index 4
@@ -588,8 +606,13 @@ fn json_mode_single_sheet_has_expected_shape() {
     assert_eq!(v["max_rows"], 2);
     assert_eq!(v["mode"], "JSON");
     assert_eq!(v["headers"], "capture");
-    // null (not 0) by default -- the header row is auto-detected, not assumed to be row 0
-    assert_eq!(v["header_row"], serde_json::Value::Null);
+    // products.xlsx has a normal header at row 0 -- header_row/body_start report the
+    // *resolved* (auto-detected, here) 1-based row numbers, header_index/body_index
+    // their 0-based equivalents, matching --top/--header-index and --body-start/--body-index.
+    assert_eq!(v["header_row"], 1);
+    assert_eq!(v["header_index"], 0);
+    assert_eq!(v["body_start"], 2);
+    assert_eq!(v["body_index"], 1);
     assert_eq!(v["decimal_separator"], ".");
     assert_eq!(v["date_mode"], "date/time");
 
