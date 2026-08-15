@@ -25,8 +25,3 @@ uuid = { version = "^1.23", features = ["fast-rng", "v4"] }
 rust_xlsxwriter = "0.89"
 serde_json = "1.0"
 
-# Temporary local override to test the unpublished 0.4.0 changes (KeySegment, Format::Array,
-# header_row_span, the currency-symbol fix) before spreadsheet-to-json is actually published.
-# Remove this section once 0.4.0 is out on crates.io.
-[patch.crates-io]
-spreadsheet-to-json = { path = "../spreadsheet_to_json" }
