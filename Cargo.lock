@@ -362,6 +362,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "enclose-strings"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a159ae1d9d827aa1b9d9aacb555fc9d5e817859dc0c2521f2ea9b5bf87643585"
+
+[[package]]
 name = "encoding_rs"
 version = "0.8.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -837,11 +843,12 @@ dependencies = [
 
 [[package]]
 name = "spread-cli"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "args",
  "clap 4.6.2",
  "dotenv",
+ "enclose-strings",
  "rust_xlsxwriter",
  "serde_json",
  "simple-string-patterns",
@@ -852,14 +859,13 @@ dependencies = [
 
 [[package]]
 name = "spreadsheet-to-json"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bafb1cfce4d430b054026fc857acb394558ca6b19ddb7ce2a04efb964554843f"
+version = "0.4.0"
 dependencies = [
  "alphanumeric",
  "calamine",
  "chrono",
  "csv",
+ "enclose-strings",
  "fuzzy-datetime",
  "heck",
  "indexmap",

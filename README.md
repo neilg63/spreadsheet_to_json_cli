@@ -45,10 +45,97 @@ Four things worth knowing up front:
 
 Field names come from the header row, snake_cased (e.g. "Gross Annual Salary (USD)" becomes `gross_annual_salary_usd`). If the header isn't on the first row, `spread-cli` detects it automatically -- title/notes rows above it, and a gap before the real data starts, are recognized and skipped. Override with `-t`/`-b` if it guesses wrong, or `--omit-header` if there's no header row at all.
 
-For wide spreadsheets (20+ columns) with long or awkward header text, it's often easier to force every column to a short A1 letter with `-c a1`, then reassign the ones you care about by letter with `--keys`, rather than typing out each header name in full:
+For wide spreadsheets with long or awkward header text, it's often easier to force every column to a short fallback key, then reassign the ones you care about with `--keys`, rather than typing out each header name in full -- `-a`/`--a1` for letters (`a`, `b`, ...) or `-R`/`--r1c1` for zero-padded numbers (`c01`, `c02`, ...):
 
 ```sh
-spread-cli my-spreadsheet.xlsx -c a1 --keys "a:first_name,b:last_name,c:salary,d:start_date"
+spread-cli my-spreadsheet.xlsx -a --keys "a:first_name,b:last_name,c:salary,d:start_date"
+spread-cli wide-report.xlsx -R --keys "c01:first_name,c27:region"
+```
+
+## Column mapping patterns (`--keys`) <a id="column-mapping-patterns-keys"></a>
+
+Beyond simple renames (`--keys "old:new"`), `--keys` understands three placeholder
+patterns for merging a run of similarly-named columns into one nested field --
+handy for spreadsheets that spread one logical field across several columns
+(`file_1`, `file_2`, `file_3`, ... or `sales_north`, `sales_south`, ...).
+
+The source side captures whatever text follows a literal prefix: `[name]` captures it as
+a number, `{name}` as text. The capture name only matters if it's referenced again on the
+target side. *(Why brackets/braces work this way: see `0.2.0` in [Version History](#version-history).)*
+
+**Plain array** -- merge sequential columns into one array of scalars, in column order:
+
+```sh
+spread-cli forms.csv -rj --keys "file_[n]:files[]"
+```
+
+`file_1=a.pdf, file_2=b.pdf, file_3=` (blank) becomes:
+
+```json
+{ "files": ["a.pdf", "b.pdf"] }
+```
+
+Blank cells are dropped, and an all-blank row still yields `files: []`, never an absent
+key. Two shorthands for the common case where the capture name is never reused:
+`file_*:files[]` (glob-style) and `file_[]:files[]` (empty brackets) both mean the same
+as `file_[n]:files[]`.
+
+**Dynamic-keyed object** -- turn each matching column into its own key inside a shared
+nested object, using the captured text as the key:
+
+```sh
+spread-cli sales.csv -rj --keys "sales_{region}:sales.{region}"
+```
+
+`sales_north=120, sales_south=95` becomes:
+
+```json
+{ "sales": { "north": 120, "south": 95 } }
+```
+
+**Array of objects** -- turn each matching column into its own item in an array of
+objects, with the captured value as one field and the cell's own value as another:
+
+```sh
+spread-cli sales.csv -rj --keys "sales_[year]:sales[].{year}{amount}"
+```
+
+`sales_2024=100, sales_2025=150` becomes:
+
+```json
+{ "sales": [{ "year": 2024, "amount": 100 }, { "year": 2025, "amount": 150 }] }
+```
+
+Swap `{amount}` for whatever field name you want (e.g. `{year}{value}`) -- the field
+after the capture always holds the cell's own value, and takes its JSON type (number vs
+text) from whichever bracket style the source pattern used for that capture.
+
+All three forms mix freely with ordinary renames in the same comma-separated `--keys`
+value, and work against xlsx/xlsm/xls/xlsb/ods just as well as CSV/TSV. They cover the
+common cases by design -- anything more elaborate is better done by piping into
+`jq`/`yq`, or with the `spreadsheet-to-json` library crate directly, which exposes the
+full `KeySegment` tree these patterns compile down to.
+
+### Suppressing columns <a id="suppressing-columns"></a>
+
+Prefix a `--keys` entry with `-` to drop that column from the output entirely:
+
+```sh
+spread-cli people.csv -rj --keys "-colour"
+```
+
+The identifier after the `-` is matched case-insensitively against:
+
+- the column's natural snake_cased header key by default (`-colour`)
+- its A1 letter in `-a`/`--a1` mode (`-d` for column D)
+- its column number in `-R`/`--r1c1` mode (`-4` for column 4 -- `-c4`/`-c04` also work)
+
+An identifier that doesn't match any column is silently ignored, same as an unmatched
+ordinary `--keys` override. Suppressions mix freely with everything else `--keys`
+supports, comma-separated:
+
+```sh
+spread-cli people.csv -rja --keys "-d,b:first_name"
 ```
 
 ## Options
@@ -61,6 +148,9 @@ spread-cli my-spreadsheet.xlsx -c a1 --keys "a:first_name,b:last_name,c:salary,d
   - `--keys "start_date:start|date"` also renames it to `start`
   - `--keys "start_date:start|date,total_price:total"` mixes several overrides in one value
   - `date` is one of several date/time format codes -- see the table under `--date-only` below
+  - `--keys "-colour"` (leading `-`) suppresses that column instead -- see [Suppressing columns](#suppressing-columns)
+  - `--keys "file_[n]:files[]"` and two other placeholder patterns merge several columns into nested output -- see [Column mapping patterns](#column-mapping-patterns-keys)
+- ```-X, --exclude-null``` drops any key whose value is JSON `null` from output, recursively through nested objects/arrays too, instead of emitting `"key": null`. Only ever targets genuine `null` -- an empty string is a different, deliberate value and is left alone.
 - ```-m, --max``` max rows *per sheet* (with `-p`, every sheet gets its own cap, default 10)
 - ```-t, --top``` header row number, 1-based, if the header isn't on the first row -- e.g. a title/notes row above it. If not given, the header row is detected automatically.
 - ```-b, --body-start``` row number, 1-based, where the real data begins, if there's a gap below the header (a blank or subtitle row). Rows between the header and this one are skipped entirely. Defaults to immediately after the header row.
@@ -68,6 +158,8 @@ spread-cli my-spreadsheet.xlsx -c a1 --keys "a:first_name,b:last_name,c:salary,d
   - With `-j`, the row indices *actually used* -- whether from `-t`/`-b` or auto-detection -- come back as `header_row`/`body_start` (1-based) and `header_index`/`body_index` (0-based).
 - ```--omit-header``` treat the file as having no header row at all; columns get fallback letter names (`a`, `b`, `c`, ... or `c01`, `c02`, ... with `--colstyle`) instead. Pair with `--keys` to give them real names: `--omit-header --keys "a:region,b:team_size,c:revenue"`.
 - ```-c, --colstyle```: fallback column-naming style for columns with no usable header, `style[:mode]` -- `style` is `a1` (letters) or `c01`/`r1`/`r1c1` (zero-padded numbers); `mode` is `all` (every column, the default) or anything else to only fill in columns lacking a real header.
+- ```-a, --a1``` (alias `-A`) shorthand for `-c a1` -- every column named by its A1 letter instead of its header. Ignored if `--colstyle`/`-c` is also given explicitly.
+- ```-R, --r1c1``` shorthand for `-c c01` -- every column named by its zero-padded number (`c01`, `c02`, ...) instead of its header. Ignored if `--colstyle`/`-c` is also given explicitly.
 - ```-d, --deferred``` For large files: streams rows to a `.jsonl` file instead of holding them all in memory. Defaults to a random-UUID filename under `EXPORT_FILE_DIRECTORY` (a `.env` variable, default `./`) -- name it yourself with `-o`. On Linux/macOS this runs as a detached background process and returns immediately; check `{path}.log` afterward to confirm it finished. On Windows it runs in-process instead, still memory-efficient, just blocking.
 - ```-o, --output``` export file path for `-d`; has no effect without it
 - ```-j, --json``` outputs one valid, indented JSON object/array for the full result -- see [Quick start](#quick-start) above for why this matters
@@ -88,9 +180,7 @@ spread-cli my-spreadsheet.xlsx -c a1 --keys "a:first_name,b:last_name,c:salary,d
   | `ti`/`time` | `19:58:45` | time only, with seconds |
   | `hm` | `19:58` | time only, hours and minutes |
 
-  e.g. `--keys "logged_at|hm"` renders just `logged_at` as `"19:58"`, leaving every other date-time column at its row-wide default. A cell that's genuinely just a time of day (e.g. an Excel cell formatted as plain `hh:mm`, which Excel stores internally as a full datetime with no real date) is rendered as a bare time automatically under the default or `ds` output; explicitly forcing `da`/`date` on such a cell surfaces Excel's placeholder date (`1899-12-31`) instead, since you're asking for a date component it doesn't really have.
-
-  `time`/`hm` also recover a time from a plain decimal number or a dot-separated string -- the common case where someone typed a time like `12.30` (meaning 12:30) and Excel/Sheets, having no time type for a dot-typed entry, silently stored it as the decimal `12.3` (trailing zero dropped). A genuine numeric column reads the digits after the point back literally as minutes (`.3` -> `30`, not `0.3 * 60 = 18`); a text/CSV value gets `.` swapped for `:` and its components extracted directly as numbers. Either way the result is validated as a plausible hh:mm(:ss) (minutes/seconds `< 60`) and zero-padded (`9:5:3` -> `09:05:03`) -- so a genuine decimal column (a price, a percentage) forced through `|time`/`|hm` by mistake correctly comes back `null` rather than a bogus time. Hours are deliberately *not* capped at `< 24` -- a "time" column is just as often a duration (elapsed hours: a race, a video, a timesheet total) as a time-of-day, and durations routinely exceed 23 hours, e.g. `27:45:00` or a decimal `100.3` meaning `100:30`. A number that also happens to read as a plausible time (`3.14` -> `03:14`) is accepted, not rejected -- an explicit `|time`/`|hm` override means "I know this is a time," so a well-formed hh:mm(:ss) shape is trusted rather than second-guessed against what the column "should" contain. `HH:MM` only from a decimal number; there's no way to recover seconds from a single fraction. None of this ever happens automatically -- only under an explicit `|time`/`|hm` override.
+  e.g. `--keys "logged_at|hm"` renders just `logged_at` as `"19:58"`, leaving every other date-time column at its row-wide default. `time`/`hm` also recover a time from a plain decimal number or dot-separated string (`12.3` -> `12:30`) and a trailing AM/PM marker (`"2:30pm"` -> `14:30`) -- only ever under an explicit `|time`/`|hm` override, never automatically. Hours are not capped at 24, since a "time" column is just as often a duration as a time-of-day. *(Full mechanics and edge cases: see `spreadsheet-to-json`'s [Version History](https://github.com/neilg63/spreadsheet_to_json#version-history), `0.3.0` and `0.3.2`.)*
 
   Other date/time transformations (reformatting, day-of-week, timezone conversion) are out of scope here -- pipe into `jq`/`yq`, or use the `spreadsheet-to-json` library crate directly for Rust code.
 - ```--debug``` prints processing time and extra diagnostic detail on error, to stderr when the main output is JSON (so it never corrupts a piped result)
@@ -135,3 +225,9 @@ spread-cli sales.xlsx -l | jq -c 'select(.price > 10)'
 spread-cli sales.xlsx -l | jq -c '{sku, total: (.price * .qty)}' > sales.ndjson
 spread-cli sales.xlsx -l | yq -p json -o yaml 'select(.price > 10)'
 ```
+
+## Version History <a id="version-history"></a>
+
+Pre-0.2.0 releases aren't individually catalogued here; see the git history.
+
+- **0.2.0** Added the three `--keys` placeholder-pattern DSLs and column suppression -- see [Column mapping patterns](#column-mapping-patterns-keys) above. `[name]`/`{name}` in the source pattern deliberately mirror JSON's own shape as a mnemonic: square brackets (arrays are index-ordered) type the capture as a number, curly braces (objects are string-keyed) as text. Added `-a`/`--a1` (alias `-A`) and `-R`/`--r1c1` as shorthands for `--colstyle a1`/`c01`; `-R` takes the capital since `-r` already means `--rows`, and is often the more practical choice for very wide sheets once A1 letters run past `z` into double letters. Added `-X`/`--exclude-null`, wiring the library's `RowOptionSet::omit_null_values` through to the CLI.

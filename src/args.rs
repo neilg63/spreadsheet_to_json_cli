@@ -113,8 +113,8 @@ pub struct Args {
   pub omit_header: bool, // no short flag: -o is --output's
 
   #[clap(
-    short = 'k', long, value_parser,
-    help = "Column overrides: source_key[:new_key][|format[|default]], comma-separated",
+    short = 'k', long, value_parser, allow_hyphen_values = true,
+    help = "Column overrides: source_key[:new_key][|format[|default]], comma-separated; a leading \"-\" (e.g. \"-colour\") suppresses that column instead",
     long_help = "Comma-separated list of column overrides, each in the form \
       source_key[:new_key][|format[|default]]. source_key is matched against the column's \
       natural (auto-detected, snake_cased) header key wherever that column actually is, so \
@@ -122,9 +122,23 @@ pub struct Args {
       silently ignored. Omit :new_key to change only the format/default and keep the \
       natural name. Examples: \"start_date|date\" casts start_date to a date; \
       \"start_date:start|date\" also renames it to start; \"a:b|int,c:d|text\" mixes \
-      multiple overrides in one value."
+      multiple overrides in one value. An entry starting with \"-\" suppresses that \
+      column outright, e.g. \"-colour\" (matched against the natural header key, or the \
+      A1 letter/R1C1 number in --a1/--r1c1 mode -- \"-d\" or \"-4\"); \
+      multiple suppressions can be comma-separated with everything else, e.g. \
+      \"-colour,start_date|date\"."
   ) ]
   pub keys: Option<String>,
+
+  #[clap(
+    short = 'X', long = "exclude-null", value_parser, default_value_t = false,
+    help = "Drop any key whose value is JSON null from the output, instead of \"key\": null",
+    long_help = "Drop any key whose value is JSON null from the output, recursively through \
+      nested objects/arrays too, instead of emitting \"key\": null. Only ever targets \
+      genuine null -- an empty string is a different, deliberate value and is left alone. \
+      Off by default; existing output is unchanged unless this is set."
+  ) ]
+  pub exclude_null: bool,
 
   #[clap(
     short = 'c', long, value_parser,
@@ -137,6 +151,27 @@ pub struct Args {
       else, e.g. \"a1:auto\")."
   ) ]
   pub colstyle: Option<String>,
+
+  #[clap(
+    short = 'a', long, short_alias = 'A', value_parser, default_value_t = false,
+    help = "Shorthand for --colstyle a1 -- every column named by its spreadsheet-style letter (a, b, ... z, aa, ab, ...) instead of its snake_cased header text",
+    long_help = "Shorthand for --colstyle a1, useful for --keys overrides that match by \
+      column letter rather than the natural snake_cased header (e.g. \"b:sales.north\" \
+      instead of needing the header's own text). -A is an alias, for symmetry with -R \
+      (--r1c1). Ignored if --colstyle is also given explicitly -- that always takes \
+      precedence over this shorthand."
+  ) ]
+  pub a1: bool,
+
+  #[clap(
+    short = 'R', long = "r1c1", value_parser, default_value_t = false,
+    help = "Shorthand for --colstyle c01 -- every column named by its zero-padded number (c01, c02, ...) instead of its snake_cased header text",
+    long_help = "Shorthand for --colstyle c01, useful for --keys overrides that match by \
+      column number rather than the natural snake_cased header. -r already means --rows, \
+      hence the capital -R here. Ignored if --colstyle is also given explicitly -- that \
+      always takes precedence over this shorthand."
+  ) ]
+  pub r1c1: bool,
 
   #[clap(
     short = 'd', long, value_parser, default_value_t = false,
@@ -203,12 +238,25 @@ pub struct Args {
 
 }
 
+/// Column overrides whose --keys source is a placeholder pattern ("file_[n]",
+/// "sales_{region}") can't be resolved into real Columns yet -- doing so needs the
+/// actual column headers, which from_args (synchronous, no file access) doesn't have.
+/// Returned alongside the OptionSet for the caller to expand once it does (see
+/// key_pattern::expand_pattern_entry), after a header-only read.
+pub type PendingKeyPattern = (String, String, Format);
+
+/// A raw "-identifier" from --keys ("colname", "d", "4") -- like PendingKeyPattern,
+/// can't resolve into a real Column (KeySegment::Excluded) until the real headers are
+/// known, since interpreting the identifier depends on which colstyle mode is active
+/// (natural key, A1 letter, or R1C1 number).
+pub type PendingSuppression = String;
+
 pub trait FromArgs {
-    fn from_args(args: &Args) -> Result<Self, String> where Self: Sized;
+    fn from_args(args: &Args) -> Result<(Self, Vec<PendingKeyPattern>, Vec<PendingSuppression>), String> where Self: Sized;
 }
 
 impl FromArgs for OptionSet {
-    fn from_args(args: &Args) -> Result<Self, String> {
+    fn from_args(args: &Args) -> Result<(Self, Vec<PendingKeyPattern>, Vec<PendingSuppression>), String> {
 
     // --keys entries are `source_key[:new_key][|format[|default]]`. source_key is matched
     // against each column's natural (auto-detected, snake_cased) header key, wherever that
@@ -218,6 +266,8 @@ impl FromArgs for OptionSet {
     // The key mapping (source_key[:new_key]) and the datatype override (format[|default])
     // are separated by "|", e.g. "weight_kg:weight|int" or "weight_kg|int" (no rename).
     let mut columns: Vec<Column> = vec![];
+    let mut pending_key_patterns: Vec<(String, String, Format)> = vec![];
+    let mut pending_suppressions: Vec<String> = vec![];
     if let Some(k_string) = args.keys.clone() {
       let split_parts = k_string.to_parts(",");
       for ck in split_parts {
@@ -227,9 +277,37 @@ impl FromArgs for OptionSet {
         let pipe_parts = ck.to_parts("|");
         let key_part = pipe_parts.first().cloned().unwrap_or_default();
         let key_sub_parts = key_part.to_parts(":");
-        let source_key = key_sub_parts.first()
-          .map(|s| s.to_snake_case())
-          .filter(|s| !s.is_empty());
+        let raw_source = key_sub_parts.first().map(|s| s.trim()).filter(|s| !s.is_empty());
+        let Some(raw_source) = raw_source else {
+          continue;
+        };
+        // "-colname"/"-d"/"-4": suppress a column outright. The identifier after the "-"
+        // is resolved against the real column headers later (once they're known -- see
+        // main.rs), the same way placeholder patterns are, since interpreting it (natural
+        // key vs A1 letter vs R1C1 number) depends on which colstyle mode is active.
+        if let Some(identifier) = raw_source.strip_prefix('-').map(|s| s.trim()).filter(|s| !s.is_empty()) {
+          pending_suppressions.push(identifier.to_string());
+          continue;
+        }
+        // A placeholder pattern ("file_[n]", "sales_{region}", "download_*") must be
+        // detected on the *raw* source text -- to_snake_case (used below for the
+        // ordinary case) silently strips "[", "]", "{", "}", "*" entirely (e.g.
+        // "file_[n]" -> "file_n"), which would destroy the pattern before it could ever
+        // be recognised.
+        if (raw_source.contains('[') && raw_source.ends_with(']'))
+          || (raw_source.contains('{') && raw_source.ends_with('}'))
+          || (raw_source.ends_with('*') && raw_source.len() > 1) {
+          let raw_target = key_sub_parts.get(1).map(|s| s.trim()).filter(|s| !s.is_empty());
+          let Some(raw_target) = raw_target else {
+            return Err(format!("invalid --keys entry '{}': a placeholder pattern needs an explicit target path (e.g. \"file_[n]:files[]\")", ck));
+          };
+          let fmt = pipe_parts.get(1)
+            .map(|s| Format::from_str(s).unwrap_or(Format::Auto))
+            .unwrap_or(Format::Auto);
+          pending_key_patterns.push((raw_source.to_string(), raw_target.to_string(), fmt));
+          continue;
+        }
+        let source_key = Some(raw_source.to_snake_case()).filter(|s| !s.is_empty());
         let Some(source_key) = source_key else {
           continue;
         };
@@ -270,7 +348,13 @@ impl FromArgs for OptionSet {
         ReadMode::Sync
     };
     let mut field_mode = FieldNameMode::AutoA1;
-    if let Some(colstyle) = args.colstyle.clone() {
+    // -a/--a1 is just a default for --colstyle, not a separate code path -- an explicit
+    // --colstyle still wins if somehow both are given, and everything below (mode
+    // parsing, r1/r1c1 handling) applies identically either way.
+    let colstyle = args.colstyle.clone()
+      .or_else(|| args.a1.then(|| "a1".to_string()))
+      .or_else(|| args.r1c1.then(|| "c01".to_string()));
+    if let Some(colstyle) = colstyle {
         let (col_key, col_mode) = colstyle.to_head_tail(":");
         if let Some(col_key) = col_key {
             // No ":mode" suffix at all (e.g. just "-c c01") means "apply to every field",
@@ -337,13 +421,15 @@ impl FromArgs for OptionSet {
     } else {
         DateTimeMode::Full
     };
-    Ok(OptionSet {
+    Ok((OptionSet {
         selected,
         indices: vec![index],
         path: args.path.clone(),
         max,
         header_row,
         data_row_index,
+        // spread-cli has no --header-span flag yet -- always a single header row for now.
+        header_row_span: 1,
         // spread-cli's own default UX: guess the header/data row from the sheet's layout
         // when neither --top/--header-index nor --body-start/--body-index is given,
         // rather than the library's own plain "assume row 0" default.
@@ -352,11 +438,12 @@ impl FromArgs for OptionSet {
         rows: crate::RowOptionSet {
             decimal_comma: args.euro_number_format,
             datetime_mode,
+            omit_null_values: args.exclude_null,
             columns,
         },
         jsonl,
         read_mode,
         field_mode
-    })
+    }, pending_key_patterns, pending_suppressions))
     }
 }

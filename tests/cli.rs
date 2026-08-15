@@ -273,6 +273,26 @@ fn colstyle_flag_accepts_r1_and_r1c1_as_aliases_for_c01() {
 }
 
 #[test]
+fn a1_flag_is_shorthand_for_colstyle_a1_but_explicit_colstyle_still_wins() {
+    let path = fixture("products.xlsx");
+
+    let out_shorthand = run(&["--json", "-m", "1", "-a", path.to_str().unwrap()]);
+    assert!(out_shorthand.status.success());
+    let out_explicit = run(&["--json", "-m", "1", "-c", "a1", path.to_str().unwrap()]);
+    assert!(out_explicit.status.success());
+    assert_eq!(
+        parse_json(&stdout(&out_shorthand))["fields"],
+        parse_json(&stdout(&out_explicit))["fields"]
+    );
+
+    // an explicit --colstyle overrides the -a shorthand rather than conflicting with it
+    let out_both = run(&["--json", "-m", "1", "-a", "-c", "c01", path.to_str().unwrap()]);
+    assert!(out_both.status.success());
+    let v = parse_json(&stdout(&out_both));
+    assert_eq!(v["column_style"], "C01 override");
+}
+
+#[test]
 fn colstyle_padding_width_scales_with_column_count() {
     // Under 100 columns, c01-style padding is 2 digits (products.xlsx has 5 columns).
     let narrow = fixture("products.xlsx");
@@ -925,5 +945,260 @@ fn json_mode_reports_errors_as_json_on_stderr() {
         v["error"].as_str().unwrap_or("").contains("file not found"),
         "got: {}",
         v
+    );
+}
+
+// --- --keys placeholder patterns ---
+
+fn write_csv(filename: &str, content: &str) -> PathBuf {
+    let path = std::env::temp_dir().join(filename);
+    std::fs::write(&path, content).unwrap();
+    path
+}
+
+#[test]
+fn keys_pattern_plain_array_merges_sequential_columns() {
+    let path = write_csv(
+        "keys_pattern_plain_array.csv",
+        "id,title,file_1,file_2,file_3\n1,Lorem ipsum,report.pdf,invoice.pdf,receipt.pdf\n",
+    );
+    let out = run(&["-jr", "-k", "file_[n]:files[]", path.to_str().unwrap()]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let v = parse_json(&stdout(&out));
+    assert_eq!(
+        v[0],
+        serde_json::json!({
+            "id": 1, "title": "Lorem ipsum",
+            "files": ["report.pdf", "invoice.pdf", "receipt.pdf"]
+        })
+    );
+}
+
+#[test]
+fn keys_pattern_glob_star_and_empty_brackets_are_equivalent_shorthands_for_plain_array() {
+    let path = write_csv(
+        "keys_pattern_shorthands.csv",
+        "id,title,download_1,download_2,download_3\n1,Lorem ipsum,report.pdf,invoice.pdf,receipt.pdf\n",
+    );
+    let expected = serde_json::json!({
+        "id": 1, "title": "Lorem ipsum",
+        "downloads": ["report.pdf", "invoice.pdf", "receipt.pdf"]
+    });
+
+    let out_star = run(&["-jr", "-k", "download_*:downloads[]", path.to_str().unwrap()]);
+    assert!(out_star.status.success(), "stderr: {}", stderr(&out_star));
+    assert_eq!(parse_json(&stdout(&out_star))[0], expected);
+
+    let out_brackets = run(&["-jr", "-k", "download_[]:downloads[]", path.to_str().unwrap()]);
+    assert!(out_brackets.status.success(), "stderr: {}", stderr(&out_brackets));
+    assert_eq!(parse_json(&stdout(&out_brackets))[0], expected);
+}
+
+#[test]
+fn keys_pattern_plain_array_drops_blank_sequential_slots() {
+    // download_2 is blank -- a CSV blank is Value::String(""), never a genuine null, so
+    // this specifically exercises the empty-string check, not just the null one.
+    let path = write_csv("keys_pattern_blank_slot.csv", "title,download_1,download_2\nTitle 1,file-1.pdf,\n");
+    let out = run(&["-jr", "-k", "download_[n]:downloads[]", path.to_str().unwrap()]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let v = parse_json(&stdout(&out));
+    assert_eq!(v[0], serde_json::json!({"title": "Title 1", "downloads": ["file-1.pdf"]}));
+}
+
+#[test]
+fn keys_pattern_plain_array_stays_empty_not_absent_when_every_slot_is_blank() {
+    let path = write_csv(
+        "keys_pattern_all_blank.csv",
+        "title,download_1,download_2\nTitle A,,\n",
+    );
+    let out = run(&["-jr", "-k", "download_[n]:downloads[]", path.to_str().unwrap()]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let v = parse_json(&stdout(&out));
+    assert_eq!(v[0], serde_json::json!({"title": "Title A", "downloads": []}));
+}
+
+#[test]
+fn exclude_null_flag_drops_null_keys_but_leaves_real_values_and_other_rows_alone() {
+    let path = write_csv(
+        "exclude_null.csv",
+        "title,status\nTitle 1,maybe\nTitle 2,yes\nTitle 3,no\nTitle 4,maybe\n",
+    );
+    // long form
+    let out = run(&["-jr", "-k", "status|truthy", "--exclude-null", path.to_str().unwrap()]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let v = parse_json(&stdout(&out));
+    assert_eq!(v[0], serde_json::json!({"title": "Title 1"}));
+    assert_eq!(v[1], serde_json::json!({"title": "Title 2", "status": true}));
+    assert_eq!(v[2], serde_json::json!({"title": "Title 3", "status": false}));
+    assert_eq!(v[3], serde_json::json!({"title": "Title 4"}));
+
+    // short form -X gives identical output
+    let out_short = run(&["-jr", "-k", "status|truthy", "-X", path.to_str().unwrap()]);
+    assert!(out_short.status.success(), "stderr: {}", stderr(&out_short));
+    assert_eq!(parse_json(&stdout(&out_short)), v);
+}
+
+#[test]
+fn without_exclude_null_flag_null_keys_are_still_emitted() {
+    let path = write_csv("no_exclude_null.csv", "title,status\nTitle 1,maybe\nTitle 2,yes\n");
+    let out = run(&["-jr", "-k", "status|truthy", path.to_str().unwrap()]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let v = parse_json(&stdout(&out));
+    assert_eq!(v[0], serde_json::json!({"title": "Title 1", "status": null}));
+}
+
+#[test]
+fn keys_pattern_object_nests_by_captured_string_key() {
+    let path = write_csv(
+        "keys_pattern_object.csv",
+        "id,sales_north_west,sales_north_east,sales_south_west,sales_south_east\n1,567,657,394,763\n",
+    );
+    let out = run(&["-jr", "-k", "sales_{region}:sales.{region}", path.to_str().unwrap()]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let v = parse_json(&stdout(&out));
+    assert_eq!(
+        v[0]["sales"],
+        serde_json::json!({"north_west": 567, "north_east": 657, "south_west": 394, "south_east": 763})
+    );
+}
+
+#[test]
+fn keys_pattern_array_inner_object_types_the_capture_as_integer() {
+    let path = write_csv("keys_pattern_array.csv", "country,sales_2024,sales_2025\nUSA,888,999\n");
+    let out = run(&["-jr", "-k", "sales_[year]:sales[].{year}{amount}", path.to_str().unwrap()]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let v = parse_json(&stdout(&out));
+    assert_eq!(
+        v[0]["sales"],
+        serde_json::json!([{"year": 2024, "amount": 888}, {"year": 2025, "amount": 999}])
+    );
+}
+
+#[test]
+fn keys_pattern_array_inner_object_with_differently_named_capture_and_fields() {
+    // Same grammar as the year/amount case, just different literal names -- confirms
+    // the mechanism is genuinely general, not special-cased around specific names.
+    let path = write_csv("keys_pattern_id_name.csv", "title,file_1,file_2\nLorem ipsum,doc-1.odt,doc-2.odt\n");
+    let out = run(&["-jr", "-k", "file_[id]:files[].{id}{name}", path.to_str().unwrap()]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let v = parse_json(&stdout(&out));
+    assert_eq!(
+        v[0]["files"],
+        serde_json::json!([{"id": 1, "name": "doc-1.odt"}, {"id": 2, "name": "doc-2.odt"}])
+    );
+}
+
+#[test]
+fn keys_pattern_can_be_mixed_with_ordinary_exact_entries() {
+    let path = write_csv("keys_pattern_mixed.csv", "id,title,file_1,file_2\n1,Lorem ipsum,report.pdf,invoice.pdf\n");
+    let out = run(&["-jr", "-k", "id:record_id|int,file_[n]:files[]", path.to_str().unwrap()]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let v = parse_json(&stdout(&out));
+    assert_eq!(v[0]["record_id"], 1);
+    assert_eq!(v[0]["files"], serde_json::json!(["report.pdf", "invoice.pdf"]));
+}
+
+#[test]
+fn keys_pattern_works_against_xlsx_too_not_just_csv() {
+    use rust_xlsxwriter::Workbook;
+    let path = std::env::temp_dir().join("keys_pattern.xlsx");
+    let mut workbook = Workbook::new();
+    let sheet = workbook.add_worksheet().set_name("Sheet1").unwrap();
+    sheet.write_string(0, 0, "id").unwrap();
+    sheet.write_string(0, 1, "file_1").unwrap();
+    sheet.write_string(0, 2, "file_2").unwrap();
+    sheet.write_number(1, 0, 1.0).unwrap();
+    sheet.write_string(1, 1, "report.pdf").unwrap();
+    sheet.write_string(1, 2, "invoice.pdf").unwrap();
+    workbook.save(&path).unwrap();
+
+    let out = run(&["-jr", "-k", "file_[n]:files[]", path.to_str().unwrap()]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let v = parse_json(&stdout(&out));
+    assert_eq!(v[0]["files"], serde_json::json!(["report.pdf", "invoice.pdf"]));
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn keys_pattern_with_an_invalid_target_shape_errors_clearly_instead_of_silently_doing_nothing() {
+    let path = write_csv("keys_pattern_invalid.csv", "id,file_1,file_2\n1,report.pdf,invoice.pdf\n");
+    // array-open not followed by a brace-group -- not a supported shape
+    let out = run(&["-jr", "-k", "file_[n]:files[].region", path.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(
+        stderr(&out).contains("not a recognised placeholder pattern"),
+        "got: {}",
+        stderr(&out)
+    );
+}
+
+#[test]
+fn keys_suppression_by_natural_snake_cased_header_key() {
+    let path = write_csv("suppress_natural.csv", "id,title,colour\n1,Widget,red\n2,Gadget,blue\n");
+    let out = run(&["-jr", "-k", "-colour", path.to_str().unwrap()]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let v = parse_json(&stdout(&out));
+    assert_eq!(v[0], serde_json::json!({ "id": 1, "title": "Widget" }));
+    assert_eq!(v[1], serde_json::json!({ "id": 2, "title": "Gadget" }));
+}
+
+#[test]
+fn keys_suppression_by_a1_letter_case_insensitive() {
+    let path = write_csv("suppress_a1.csv", "id,title,colour,notes\n1,Widget,red,ok\n");
+    let out = run(&["-jra", "-k", "-D", path.to_str().unwrap()]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let v = parse_json(&stdout(&out));
+    assert_eq!(v[0], serde_json::json!({ "a": 1, "b": "Widget", "c": "red" }));
+}
+
+#[test]
+fn keys_suppression_by_a1_letter_via_capital_a_alias() {
+    let path = write_csv("suppress_a1_alias.csv", "id,title,colour,notes\n1,Widget,red,ok\n");
+    let out = run(&["-jrA", "-k", "-d", path.to_str().unwrap()]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let v = parse_json(&stdout(&out));
+    assert_eq!(v[0], serde_json::json!({ "a": 1, "b": "Widget", "c": "red" }));
+}
+
+#[test]
+fn keys_suppression_by_r1c1_plain_number() {
+    let path = write_csv("suppress_r1c1_number.csv", "id,title,colour,notes\n1,Widget,red,ok\n");
+    let out = run(&["-jrR", "-k", "-4", path.to_str().unwrap()]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let v = parse_json(&stdout(&out));
+    assert_eq!(v[0], serde_json::json!({ "c01": 1, "c02": "Widget", "c03": "red" }));
+}
+
+#[test]
+fn keys_suppression_by_r1c1_zero_padded_key() {
+    let path = write_csv("suppress_r1c1_padded.csv", "id,title,colour,notes\n1,Widget,red,ok\n");
+    let out = run(&["-jrR", "-k", "-c04", path.to_str().unwrap()]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let v = parse_json(&stdout(&out));
+    assert_eq!(v[0], serde_json::json!({ "c01": 1, "c02": "Widget", "c03": "red" }));
+}
+
+#[test]
+fn keys_suppression_unmatched_identifier_is_silently_ignored() {
+    let path = write_csv("suppress_unmatched.csv", "id,title\n1,Widget\n");
+    let out = run(&["-jr", "-k", "-doesnotexist", path.to_str().unwrap()]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    assert!(stderr(&out).is_empty());
+    let v = parse_json(&stdout(&out));
+    assert_eq!(v[0], serde_json::json!({ "id": 1, "title": "Widget" }));
+}
+
+#[test]
+fn keys_suppression_can_be_combined_with_a_placeholder_pattern_and_an_ordinary_override() {
+    let path = write_csv(
+        "suppress_combined.csv",
+        "id,title,colour,file_1,file_2\n1,Widget,red,a.pdf,b.pdf\n",
+    );
+    let out = run(&["-jr", "-k", "-colour,file_[n]:files[],id:record_id|int", path.to_str().unwrap()]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let v = parse_json(&stdout(&out));
+    assert_eq!(
+        v[0],
+        serde_json::json!({ "record_id": 1, "title": "Widget", "files": ["a.pdf", "b.pdf"] })
     );
 }

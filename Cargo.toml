@@ -1,6 +1,6 @@
 [package]
 name = "spread-cli"
-version = "0.1.4"
+version = "0.2.0"
 edition = "2021"
 description = "Converts spreadsheets and CSV files to a friendly JSON format with many field name and data-type options."
 repository = "https://github.com/neilg63/spreadsheet_to_json_cli"
@@ -15,11 +15,18 @@ exclude = ["tests/fixtures/*"]
 args = "^2.2.0"
 clap = { version = "^4.6.1", features = ["env", "derive"] }
 dotenv = { version = "^0.15.0", features = ["clap", "cli"] }
-spreadsheet-to-json = "^0.3.2"
+spreadsheet-to-json = "^0.4.0"
 to_segments = "0.1"
 simple-string-patterns = "0.4"
+enclose-strings = { version = "0.2.0", features = ["extract"] }
 uuid = { version = "^1.23", features = ["fast-rng", "v4"] }
 
 [dev-dependencies]
 rust_xlsxwriter = "0.89"
 serde_json = "1.0"
+
+# Temporary local override to test the unpublished 0.4.0 changes (KeySegment, Format::Array,
+# header_row_span, the currency-symbol fix) before spreadsheet-to-json is actually published.
+# Remove this section once 0.4.0 is out on crates.io.
+[patch.crates-io]
+spreadsheet-to-json = { path = "../spreadsheet_to_json" }

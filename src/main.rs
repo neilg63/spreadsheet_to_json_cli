@@ -1,4 +1,5 @@
 mod args;
+mod key_pattern;
 
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -36,8 +37,8 @@ async fn main() -> ExitCode {
 
   let debug_mode = args.debug;
 
-  let opts = match OptionSet::from_args(&args) {
-    Ok(opts) => opts,
+  let (mut opts, pending_key_patterns, pending_suppressions) = match OptionSet::from_args(&args) {
+    Ok(result) => result,
     Err(msg) => {
       print_error(args.json, &msg);
       return ExitCode::from(2);
@@ -48,6 +49,48 @@ async fn main() -> ExitCode {
   if let Err(msg) = validate_path(args.path.as_deref().unwrap()) {
     print_error(args.json, &msg);
     return ExitCode::from(2);
+  }
+
+  // Placeholder --keys patterns ("file_[n]:files[]") and "-identifier" suppressions
+  // can't resolve into real Columns until the actual column headers are known, which
+  // from_args (synchronous, no file access) never has. Skipped entirely when there are
+  // neither -- the overwhelmingly common case -- so ordinary --keys usage pays no extra
+  // cost at all. Otherwise: a light, header-only read (max(0): headers/detection still
+  // run, no rows captured) to get the natural column keys, resolve each pattern/
+  // suppression against them, then fold the results into opts.rows.columns before the
+  // real read below.
+  if !pending_key_patterns.is_empty() || !pending_suppressions.is_empty() {
+    let mut peek_opts = opts.clone();
+    peek_opts.max = Some(0);
+    match process_spreadsheet_immediate(&peek_opts).await {
+      Ok(result) => {
+        for (source, target, format) in &pending_key_patterns {
+          match key_pattern::expand_pattern_entry(source, target, format, &result.keys) {
+            Some(expanded) => opts.rows.columns.extend(expanded),
+            None => {
+              let msg = format!(
+                "invalid --keys entry '{}:{}': not a recognised placeholder pattern (see --help for the supported shapes)",
+                source, target
+              );
+              print_error(args.json, &msg);
+              return ExitCode::from(2);
+            }
+          }
+        }
+        // An identifier that matches no column is silently ignored, same as an
+        // ordinary --keys source_key with no match (a typo, or the wrong sheet/file) --
+        // not treated as an error.
+        for identifier in &pending_suppressions {
+          if let Some(natural_key) = key_pattern::resolve_suppression_key(identifier, &result.keys) {
+            opts.rows.columns.push(key_pattern::build_suppression_column(&natural_key));
+          }
+        }
+      }
+      Err(err) => {
+        print_error(args.json, &format!("could not read column headers to expand --keys patterns: {}", err));
+        return ExitCode::from(2);
+      }
+    }
   }
 
   // --deferred: on Unix, hand the actual export off to a detached background process and
