@@ -238,8 +238,8 @@ pub struct Args {
 
 }
 
-/// Column overrides whose --keys source is a placeholder pattern ("file_[n]",
-/// "sales_{region}") can't be resolved into real Columns yet -- doing so needs the
+/// Column overrides whose --keys source is a placeholder pattern (`"file_[n]"`,
+/// `"sales_{region}"`) can't be resolved into real Columns yet -- doing so needs the
 /// actual column headers, which from_args (synchronous, no file access) doesn't have.
 /// Returned alongside the OptionSet for the caller to expand once it does (see
 /// key_pattern::expand_pattern_entry), after a header-only read.
