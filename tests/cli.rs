@@ -276,17 +276,24 @@ fn colstyle_flag_accepts_r1_and_r1c1_as_aliases_for_c01() {
 fn a1_flag_is_shorthand_for_colstyle_a1_but_explicit_colstyle_still_wins() {
     let path = fixture("products.xlsx");
 
-    let out_shorthand = run(&["--json", "-m", "1", "-a", path.to_str().unwrap()]);
+    // -A is the primary short flag (matching -R for R1C1 mode); -a is an accepted alias.
+    let out_shorthand = run(&["--json", "-m", "1", "-A", path.to_str().unwrap()]);
     assert!(out_shorthand.status.success());
+    let out_alias = run(&["--json", "-m", "1", "-a", path.to_str().unwrap()]);
+    assert!(out_alias.status.success());
     let out_explicit = run(&["--json", "-m", "1", "-c", "a1", path.to_str().unwrap()]);
     assert!(out_explicit.status.success());
     assert_eq!(
         parse_json(&stdout(&out_shorthand))["fields"],
         parse_json(&stdout(&out_explicit))["fields"]
     );
+    assert_eq!(
+        parse_json(&stdout(&out_alias))["fields"],
+        parse_json(&stdout(&out_explicit))["fields"]
+    );
 
-    // an explicit --colstyle overrides the -a shorthand rather than conflicting with it
-    let out_both = run(&["--json", "-m", "1", "-a", "-c", "c01", path.to_str().unwrap()]);
+    // an explicit --colstyle overrides the -A shorthand rather than conflicting with it
+    let out_both = run(&["--json", "-m", "1", "-A", "-c", "c01", path.to_str().unwrap()]);
     assert!(out_both.status.success());
     let v = parse_json(&stdout(&out_both));
     assert_eq!(v["column_style"], "C01 override");
@@ -1145,16 +1152,16 @@ fn keys_suppression_by_natural_snake_cased_header_key() {
 #[test]
 fn keys_suppression_by_a1_letter_case_insensitive() {
     let path = write_csv("suppress_a1.csv", "id,title,colour,notes\n1,Widget,red,ok\n");
-    let out = run(&["-jra", "-k", "-D", path.to_str().unwrap()]);
+    let out = run(&["-jrA", "-k", "-D", path.to_str().unwrap()]);
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     let v = parse_json(&stdout(&out));
     assert_eq!(v[0], serde_json::json!({ "a": 1, "b": "Widget", "c": "red" }));
 }
 
 #[test]
-fn keys_suppression_by_a1_letter_via_capital_a_alias() {
+fn keys_suppression_by_a1_letter_via_lowercase_a_alias() {
     let path = write_csv("suppress_a1_alias.csv", "id,title,colour,notes\n1,Widget,red,ok\n");
-    let out = run(&["-jrA", "-k", "-d", path.to_str().unwrap()]);
+    let out = run(&["-jra", "-k", "-d", path.to_str().unwrap()]);
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     let v = parse_json(&stdout(&out));
     assert_eq!(v[0], serde_json::json!({ "a": 1, "b": "Widget", "c": "red" }));

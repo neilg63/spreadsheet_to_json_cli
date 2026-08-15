@@ -45,10 +45,10 @@ Four things worth knowing up front:
 
 Field names come from the header row, snake_cased (e.g. "Gross Annual Salary (USD)" becomes `gross_annual_salary_usd`). If the header isn't on the first row, `spread-cli` detects it automatically -- title/notes rows above it, and a gap before the real data starts, are recognized and skipped. Override with `-t`/`-b` if it guesses wrong, or `--omit-header` if there's no header row at all.
 
-For wide spreadsheets with long or awkward header text, it's often easier to force every column to a short fallback key, then reassign the ones you care about with `--keys`, rather than typing out each header name in full -- `-a`/`--a1` for letters (`a`, `b`, ...) or `-R`/`--r1c1` for zero-padded numbers (`c01`, `c02`, ...):
+For wide spreadsheets with long or awkward header text, it's often easier to force every column to a short fallback key, then reassign the ones you care about with `--keys`, rather than typing out each header name in full -- `-A`/`--a1` for letters (`a`, `b`, ...) or `-R`/`--r1c1` for zero-padded numbers (`c01`, `c02`, ...):
 
 ```sh
-spread-cli my-spreadsheet.xlsx -a --keys "a:first_name,b:last_name,c:salary,d:start_date"
+spread-cli my-spreadsheet.xlsx -A --keys "a:first_name,b:last_name,c:salary,d:start_date"
 spread-cli wide-report.xlsx -R --keys "c01:first_name,c27:region"
 ```
 
@@ -127,7 +127,7 @@ spread-cli people.csv -rj --keys "-colour"
 The identifier after the `-` is matched case-insensitively against:
 
 - the column's natural snake_cased header key by default (`-colour`)
-- its A1 letter in `-a`/`--a1` mode (`-d` for column D)
+- its A1 letter in `-A`/`--a1` mode (`-d` for column D)
 - its column number in `-R`/`--r1c1` mode (`-4` for column 4 -- `-c4`/`-c04` also work)
 
 An identifier that doesn't match any column is silently ignored, same as an unmatched
@@ -135,7 +135,7 @@ ordinary `--keys` override. Suppressions mix freely with everything else `--keys
 supports, comma-separated:
 
 ```sh
-spread-cli people.csv -rja --keys "-d,b:first_name"
+spread-cli people.csv -rjA --keys "-d,b:first_name"
 ```
 
 ## Options
@@ -158,7 +158,7 @@ spread-cli people.csv -rja --keys "-d,b:first_name"
   - With `-j`, the row indices *actually used* -- whether from `-t`/`-b` or auto-detection -- come back as `header_row`/`body_start` (1-based) and `header_index`/`body_index` (0-based).
 - ```--omit-header``` treat the file as having no header row at all; columns get fallback letter names (`a`, `b`, `c`, ... or `c01`, `c02`, ... with `--colstyle`) instead. Pair with `--keys` to give them real names: `--omit-header --keys "a:region,b:team_size,c:revenue"`.
 - ```-c, --colstyle```: fallback column-naming style for columns with no usable header, `style[:mode]` -- `style` is `a1` (letters) or `c01`/`r1`/`r1c1` (zero-padded numbers); `mode` is `all` (every column, the default) or anything else to only fill in columns lacking a real header.
-- ```-a, --a1``` (alias `-A`) shorthand for `-c a1` -- every column named by its A1 letter instead of its header. Ignored if `--colstyle`/`-c` is also given explicitly.
+- ```-A, --a1``` (alias `-a`) shorthand for `-c a1` -- every column named by its A1 letter instead of its header. Ignored if `--colstyle`/`-c` is also given explicitly.
 - ```-R, --r1c1``` shorthand for `-c c01` -- every column named by its zero-padded number (`c01`, `c02`, ...) instead of its header. Ignored if `--colstyle`/`-c` is also given explicitly.
 - ```-d, --deferred``` For large files: streams rows to a `.jsonl` file instead of holding them all in memory. Defaults to a random-UUID filename under `EXPORT_FILE_DIRECTORY` (a `.env` variable, default `./`) -- name it yourself with `-o`. On Linux/macOS this runs as a detached background process and returns immediately; check `{path}.log` afterward to confirm it finished. On Windows it runs in-process instead, still memory-efficient, just blocking.
 - ```-o, --output``` export file path for `-d`; has no effect without it
@@ -230,4 +230,4 @@ spread-cli sales.xlsx -l | yq -p json -o yaml 'select(.price > 10)'
 
 Pre-0.2.0 releases aren't individually catalogued here; see the git history.
 
-- **0.2.0** Added the three `--keys` placeholder-pattern DSLs and column suppression -- see [Column mapping patterns](#column-mapping-patterns-keys) above. `[name]`/`{name}` in the source pattern deliberately mirror JSON's own shape as a mnemonic: square brackets (arrays are index-ordered) type the capture as a number, curly braces (objects are string-keyed) as text. Added `-a`/`--a1` (alias `-A`) and `-R`/`--r1c1` as shorthands for `--colstyle a1`/`c01`; `-R` takes the capital since `-r` already means `--rows`, and is often the more practical choice for very wide sheets once A1 letters run past `z` into double letters. Added `-X`/`--exclude-null`, wiring the library's `RowOptionSet::omit_null_values` through to the CLI.
+- **0.2.0** Added the three `--keys` placeholder-pattern DSLs and column suppression -- see [Column mapping patterns](#column-mapping-patterns-keys) above. `[name]`/`{name}` in the source pattern deliberately mirror JSON's own shape as a mnemonic: square brackets (arrays are index-ordered) type the capture as a number, curly braces (objects are string-keyed) as text. Added `-A`/`--a1` (alias `-a`) and `-R`/`--r1c1` as shorthands for `--colstyle a1`/`c01`; both take the capital consistently -- `-R` since `-r` already means `--rows`, and `-A` to match it -- and `-R` is often the more practical choice for very wide sheets once A1 letters run past `z` into double letters. Added `-X`/`--exclude-null`, wiring the library's `RowOptionSet::omit_null_values` through to the CLI.

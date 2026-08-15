@@ -153,13 +153,12 @@ pub struct Args {
   pub colstyle: Option<String>,
 
   #[clap(
-    short = 'a', long, short_alias = 'A', value_parser, default_value_t = false,
+    short = 'A', long, short_alias = 'a', value_parser, default_value_t = false,
     help = "Shorthand for --colstyle a1 -- every column named by its spreadsheet-style letter (a, b, ... z, aa, ab, ...) instead of its snake_cased header text",
     long_help = "Shorthand for --colstyle a1, useful for --keys overrides that match by \
       column letter rather than the natural snake_cased header (e.g. \"b:sales.north\" \
-      instead of needing the header's own text). -A is an alias, for symmetry with -R \
-      (--r1c1). Ignored if --colstyle is also given explicitly -- that always takes \
-      precedence over this shorthand."
+      instead of needing the header's own text). -a is an alias. Ignored if --colstyle \
+      is also given explicitly -- that always takes precedence over this shorthand."
   ) ]
   pub a1: bool,
 
