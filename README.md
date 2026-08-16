@@ -138,6 +138,36 @@ supports, comma-separated:
 spread-cli people.csv -rjA --keys "-d,b:first_name"
 ```
 
+### Splitting one column into an array <a id="splitting-one-column-into-an-array"></a>
+
+The placeholder patterns above merge *several* columns into one nested field. For a
+single column whose own cell text is already delimited (`"a.pdf|b.pdf"`,
+`"north,south,east"`), use the array format instead -- `type[]` or `type[](separator)`
+as the `|format` part of an ordinary `--keys` entry:
+
+```sh
+spread-cli people.csv -rj --keys "tags|text[]"          # split on "," (the default)
+spread-cli people.csv -rj --keys "editors|text[](|)"     # split on "|" instead
+spread-cli people.csv -rj --keys "scores|int[]"          # -> [85, 92, 78], real numbers
+```
+
+`type` is any of the usual format codes (`text`, `int`, `float`, ...), applied to each
+element after splitting -- it must be one of those real codes, not the column/field
+name (an unrecognized word here is silently treated the same as `text`, rather than
+erroring, so a typo casting to `int[]` won't be caught). If you'd rather write it in a
+more familiar, JS-like form, `.split(...)` works identically -- only the text between
+`]` and `(` is ignored (that's where the function name goes), and a matching pair of
+quotes around the separator is stripped if present:
+
+```sh
+spread-cli people.csv -rj --keys "editors|string[].split('|')"
+```
+
+All three forms above are equivalent. This is a single-column cast (`Format::Array` in
+the underlying library), not a placeholder pattern -- no `[name]`/`{name}` capture is
+involved, and it can be freely mixed with renames, other overrides, and placeholder
+patterns in the same comma-separated `--keys` value.
+
 ## Options
 
 - ```path``` Local path to the source spreadsheet or CSV/TSV file
@@ -150,6 +180,7 @@ spread-cli people.csv -rjA --keys "-d,b:first_name"
   - `date` is one of several date/time format codes -- see the table under `--date-only` below
   - `--keys "-colour"` (leading `-`) suppresses that column instead -- see [Suppressing columns](#suppressing-columns)
   - `--keys "file_[n]:files[]"` and two other placeholder patterns merge several columns into nested output -- see [Column mapping patterns](#column-mapping-patterns-keys)
+  - `--keys "tags|text[](,)"` splits *one* column's delimited text into a JSON array instead -- see [Splitting one column into an array](#splitting-one-column-into-an-array)
 - ```-X, --exclude-null``` drops any key whose value is JSON `null` from output, recursively through nested objects/arrays too, instead of emitting `"key": null`. Only ever targets genuine `null` -- an empty string is a different, deliberate value and is left alone.
 - ```-m, --max``` max rows *per sheet* (with `-p`, every sheet gets its own cap, default 10)
 - ```-t, --top``` header row number, 1-based, if the header isn't on the first row -- e.g. a title/notes row above it. If not given, the header row is detected automatically.

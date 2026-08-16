@@ -250,6 +250,34 @@ pub type PendingKeyPattern = (String, String, Format);
 /// (natural key, A1 letter, or R1C1 number).
 pub type PendingSuppression = String;
 
+/// Splits `s` on `sep`, but never on a `sep` occurrence found inside a parenthesised
+/// group. `--keys` already uses `,` to separate entries and `|` to separate
+/// source_key/format/default within one entry -- but a `Format::Array` spec can carry a
+/// custom split character of its own in parentheses (e.g. `"text[](|)"`, `"text[](,)"`),
+/// which would otherwise collide with one of those same delimiters and get chopped up
+/// before `Format::from_str` ever sees it.
+fn split_top_level(s: &str, sep: char) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut depth = 0i32;
+    for c in s.chars() {
+        match c {
+            '(' => {
+                depth += 1;
+                current.push(c);
+            },
+            ')' => {
+                depth -= 1;
+                current.push(c);
+            },
+            c if c == sep && depth <= 0 => parts.push(std::mem::take(&mut current)),
+            c => current.push(c),
+        }
+    }
+    parts.push(current);
+    parts
+}
+
 pub trait FromArgs {
     fn from_args(args: &Args) -> Result<(Self, Vec<PendingKeyPattern>, Vec<PendingSuppression>), String> where Self: Sized;
 }
@@ -268,12 +296,15 @@ impl FromArgs for OptionSet {
     let mut pending_key_patterns: Vec<(String, String, Format)> = vec![];
     let mut pending_suppressions: Vec<String> = vec![];
     if let Some(k_string) = args.keys.clone() {
-      let split_parts = k_string.to_parts(",");
+      let split_parts = split_top_level(&k_string, ',');
       for ck in split_parts {
-        // to_parts (not to_segments) is required throughout here: to_segments collapses
-        // empty segments (e.g. "weight_kg||0" would lose the empty format slot entirely),
-        // which would silently misalign the default onto the wrong field.
-        let pipe_parts = ck.to_parts("|");
+        // split_top_level (not to_parts/to_segments) is required throughout here:
+        // to_segments collapses empty segments (e.g. "weight_kg||0" would lose the empty
+        // format slot entirely, silently misaligning the default onto the wrong field),
+        // and a plain to_parts would also split on a "|"/"," that's actually part of a
+        // Format::Array spec's own custom separator, e.g. "col|text[](|)" or
+        // "col|text[](,)" -- split_top_level leaves anything inside "(...)" alone.
+        let pipe_parts = split_top_level(&ck, '|');
         let key_part = pipe_parts.first().cloned().unwrap_or_default();
         let key_sub_parts = key_part.to_parts(":");
         let raw_source = key_sub_parts.first().map(|s| s.trim()).filter(|s| !s.is_empty());

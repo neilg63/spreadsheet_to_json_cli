@@ -843,7 +843,7 @@ dependencies = [
 
 [[package]]
 name = "spread-cli"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "args",
  "clap 4.6.2",

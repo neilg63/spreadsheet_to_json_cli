@@ -222,6 +222,140 @@ fn keys_flag_compound_entries_mix_rename_and_format_only() {
 }
 
 #[test]
+fn keys_flag_array_format_with_custom_pipe_separator_is_not_mistaken_for_the_keys_delimiter() {
+    // Format::Array's own custom split character lives in parentheses, e.g. "text[](|)"
+    // -- since --keys itself already uses "|" to separate source_key/format/default, a
+    // naive split on every "|" would chop this apart before Format::from_str ever saw
+    // it (the "|" inside "(|)" would be mistaken for the format/default delimiter),
+    // silently falling back to the default "," separator instead.
+    let path = write_csv("keys_array_pipe_sep.csv", "id,editors\n1,Alice|Bob\n");
+    let out = run(&["-jr", "-k", "editors|text[](|)", path.to_str().unwrap()]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let v = parse_json(&stdout(&out));
+    assert_eq!(v[0]["editors"], serde_json::json!(["Alice", "Bob"]));
+}
+
+#[test]
+fn keys_flag_array_format_with_custom_pipe_separator_survives_multiple_keys_entries() {
+    // Same as above, but combined with a second, unrelated --keys entry -- the outer
+    // comma-separated entry list must also leave the "|" inside "(|)" alone.
+    let path = write_csv(
+        "keys_array_pipe_sep_multi.csv",
+        "id,files,editors\n1,a.pdf,Alice|Bob\n",
+    );
+    let out = run(&["-jr", "-k", "files:documents,editors|text[](|)", path.to_str().unwrap()]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let v = parse_json(&stdout(&out));
+    assert_eq!(v[0]["documents"], "a.pdf");
+    assert_eq!(v[0]["editors"], serde_json::json!(["Alice", "Bob"]));
+}
+
+#[test]
+fn keys_flag_array_format_with_custom_comma_separator_survives_the_entries_split() {
+    // The outer --keys entry list is itself comma-separated, so an explicit "(,)" --
+    // the same character as the default separator, just spelled out -- must also
+    // survive without being mistaken for the boundary between two --keys entries.
+    let path = write_csv("keys_array_comma_sep.csv", "id,tags\n1,\"x,y\"\n");
+    let out = run(&["-jr", "-k", "tags|text[](,)", path.to_str().unwrap()]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let v = parse_json(&stdout(&out));
+    assert_eq!(v[0]["tags"], serde_json::json!(["x", "y"]));
+}
+
+#[test]
+fn keys_flag_array_format_casts_elements_to_real_json_numbers_not_strings() {
+    // Every array-format test above uses string elements -- this locks in that "int[]"/
+    // "float[]" actually cast each split piece to a genuine JSON number, not just split
+    // into an array of number-looking strings.
+    let path = write_csv("keys_array_int_cast.csv", "id,scores\n1,\"85,92,78\"\n");
+    let out = run(&["-jr", "-k", "scores|int[]", path.to_str().unwrap()]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let v = parse_json(&stdout(&out));
+    assert_eq!(v[0]["scores"], serde_json::json!([85, 92, 78]));
+    for score in v[0]["scores"].as_array().unwrap() {
+        assert!(score.is_number(), "expected a number, got {}", score);
+    }
+
+    // an explicit "(,)" -- the same character as the default -- behaves identically
+    let path2 = write_csv("keys_array_int_cast_explicit_sep.csv", "id,scores\n1,\"85,92,78\"\n");
+    let out2 = run(&["-jr", "-k", "scores|int[](,)", path2.to_str().unwrap()]);
+    assert!(out2.status.success(), "stderr: {}", stderr(&out2));
+    let v2 = parse_json(&stdout(&out2));
+    assert_eq!(v2[0]["scores"], serde_json::json!([85, 92, 78]));
+}
+
+#[test]
+fn keys_flag_array_format_accepts_a_js_like_quoted_split_call() {
+    // Some developers reach for a more familiar-looking "string[].split('|')" instead
+    // of the terser "string[](|)" -- the library ignores whatever text sits between "]"
+    // and "(" (so the function name itself is never actually inspected) and strips a
+    // matching pair of quotes from the parenthesized content if present. Both forms,
+    // and both quote styles, must produce the same split.
+    let path = write_csv("keys_array_split_call.csv", "id,editors\n1,Alice|Bob\n");
+    for keys_value in [
+        "editors|string[].split('|')",
+        r#"editors|string[].split("|")"#,
+        "editors|string[](|)",
+    ] {
+        let out = run(&["-jr", "-k", keys_value, path.to_str().unwrap()]);
+        assert!(out.status.success(), "keys={} stderr: {}", keys_value, stderr(&out));
+        let v = parse_json(&stdout(&out));
+        assert_eq!(v[0]["editors"], serde_json::json!(["Alice", "Bob"]), "keys={}", keys_value);
+    }
+}
+
+#[test]
+fn keys_flag_array_format_split_call_accepts_a_multi_char_separator() {
+    let path = write_csv("keys_array_split_call_multichar.csv", "id,editors\n1,Alice::Bob\n");
+    let out = run(&["-jr", "-k", "editors|string[].split('::')", path.to_str().unwrap()]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let v = parse_json(&stdout(&out));
+    assert_eq!(v[0]["editors"], serde_json::json!(["Alice", "Bob"]));
+}
+
+#[test]
+fn keys_flag_array_format_split_call_survives_alongside_another_keys_entry() {
+    // The quoted "|" sits inside parentheses, so it must survive both the outer
+    // comma-separated entry split and the source_key/format/default pipe split.
+    let path = write_csv(
+        "keys_array_split_call_multi.csv",
+        "id,files,editors\n1,a.pdf,Alice|Bob\n",
+    );
+    let out = run(&[
+        "-jr", "-k", "files:documents,editors|string[].split('|')", path.to_str().unwrap(),
+    ]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let v = parse_json(&stdout(&out));
+    assert_eq!(v[0]["documents"], "a.pdf");
+    assert_eq!(v[0]["editors"], serde_json::json!(["Alice", "Bob"]));
+}
+
+#[test]
+fn keys_flag_array_format_unrecognized_type_prefix_silently_falls_back_to_plain_strings() {
+    // The type before "[]" must be a real format code ("string"/"text"/"int"/...) --
+    // this is NOT the same "anything goes" leniency as the text between "]" and "(",
+    // which really is ignored. An unrecognized word here (e.g. the column's own name,
+    // as in the very first version of this pattern) doesn't error: it silently falls
+    // back to Format::Auto, which for an array *element* renders as a plain string --
+    // so it happens to look identical to "string[]" for already-textual data, but would
+    // NOT cast elements to a number the way an explicit "int[]" does. Locking in this
+    // fallback behavior so it doesn't regress into an error (or into surprise numeric
+    // casting) without a deliberate decision either way.
+    let path = write_csv(
+        "keys_array_unrecognized_prefix.csv",
+        "id,editors,codes\n1,Alice|Bob,42|100\n",
+    );
+    let out = run(&[
+        "-jr", "-k", "editors|editors[](|),codes|codes[](|)", path.to_str().unwrap(),
+    ]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let v = parse_json(&stdout(&out));
+    assert_eq!(v[0]["editors"], serde_json::json!(["Alice", "Bob"]));
+    // codes look numeric but stay strings, since "codes" isn't "int"/"integer"
+    assert_eq!(v[0]["codes"], serde_json::json!(["42", "100"]));
+}
+
+#[test]
 fn colstyle_flag_bare_value_applies_to_every_field() {
     // "-c c01" (no ":all" suffix) should behave the same as "-c c01:all" -- it used to be
     // a silent no-op, since matching required both a key AND an explicit mode after ":".
