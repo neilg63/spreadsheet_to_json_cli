@@ -1,5 +1,6 @@
 mod args;
 mod key_pattern;
+mod filter_pattern;
 
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -37,7 +38,7 @@ async fn main() -> ExitCode {
 
   let debug_mode = args.debug;
 
-  let (mut opts, pending_key_patterns, pending_suppressions) = match OptionSet::from_args(&args) {
+  let (mut opts, pending) = match OptionSet::from_args(&args) {
     Ok(result) => result,
     Err(msg) => {
       print_error(args.json, &msg);
@@ -59,12 +60,12 @@ async fn main() -> ExitCode {
   // run, no rows captured) to get the natural column keys, resolve each pattern/
   // suppression against them, then fold the results into opts.rows.columns before the
   // real read below.
-  if !pending_key_patterns.is_empty() || !pending_suppressions.is_empty() {
+  if !pending.is_empty() {
     let mut peek_opts = opts.clone();
     peek_opts.max = Some(0);
     match process_spreadsheet_immediate(&peek_opts).await {
       Ok(result) => {
-        for (source, target, format) in &pending_key_patterns {
+        for (source, target, format) in &pending.key_patterns {
           match key_pattern::expand_pattern_entry(source, target, format, &result.keys) {
             Some(expanded) => opts.rows.columns.extend(expanded),
             None => {
@@ -80,9 +81,37 @@ async fn main() -> ExitCode {
         // An identifier that matches no column is silently ignored, same as an
         // ordinary --keys source_key with no match (a typo, or the wrong sheet/file) --
         // not treated as an error.
-        for identifier in &pending_suppressions {
+        for identifier in &pending.suppressions {
           if let Some(natural_key) = key_pattern::resolve_suppression_key(identifier, &result.keys) {
             opts.rows.columns.push(key_pattern::build_suppression_column(&natural_key));
+          }
+        }
+        // Unlike a single suppression, a range endpoint that fails to resolve (or a
+        // range given in reverse order) is a clear error -- silently ignoring one end
+        // of a two-sided range is more likely to hide a real mistake than a plain typo
+        // is, so it doesn't get the same "unmatched is ignored" treatment.
+        for (start, end) in &pending.range_suppressions {
+          let resolve = |identifier: &str| -> Result<usize, String> {
+            let natural_key = key_pattern::resolve_suppression_key(identifier, &result.keys)
+              .ok_or_else(|| format!("invalid --skip-cols range: column '{identifier}' not found"))?;
+            result.keys.iter().position(|k| *k == natural_key)
+              .ok_or_else(|| format!("invalid --skip-cols range: column '{identifier}' not found"))
+          };
+          let (start_index, end_index) = match (resolve(start), resolve(end)) {
+            (Ok(s), Ok(e)) => (s, e),
+            (Err(msg), _) | (_, Err(msg)) => {
+              print_error(args.json, &msg);
+              return ExitCode::from(2);
+            }
+          };
+          if start_index > end_index {
+            print_error(args.json, &format!(
+              "invalid --skip-cols range '{start}..{end}': '{start}' comes after '{end}' in the sheet -- reverse the range"
+            ));
+            return ExitCode::from(2);
+          }
+          for natural_key in &result.keys[start_index..=end_index] {
+            opts.rows.columns.push(key_pattern::build_suppression_column(natural_key));
           }
         }
       }

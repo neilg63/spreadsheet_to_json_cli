@@ -18,10 +18,20 @@ dotenv = { version = "^0.15.0", features = ["clap", "cli"] }
 spreadsheet-to-json = "^0.4.0"
 to_segments = "0.1"
 simple-string-patterns = "0.4"
-enclose-strings = { version = "0.2.0", features = ["extract"] }
+enclose-strings = { version = "0.3.0", features = ["extract"] }
 uuid = { version = "^1.23", features = ["fast-rng", "v4"] }
 
 [dev-dependencies]
 rust_xlsxwriter = "0.89"
 serde_json = "1.0"
 
+# Temporary local override to test the unpublished filter.rs (FilterCondition/
+# FilterMatch/ColumnMatch) additions before spreadsheet-to-json is republished.
+# Remove this section once that release is out on crates.io.
+[patch.crates-io]
+spreadsheet-to-json = { path = "../spreadsheet_to_json" }
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1

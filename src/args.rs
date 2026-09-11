@@ -131,6 +131,43 @@ pub struct Args {
   pub keys: Option<String>,
 
   #[clap(
+    short = 'f', long, value_parser,
+    help = "Drop rows that don't match a SQL-like boolean expression, e.g. \"age >= 18 and name ILIKE 'a%'\"",
+    long_help = "Comma-free SQL-like boolean expression: field names match the row's \
+      *final* keys (after any --keys renames), matched against a literal or quoted \
+      string with =, !=/<>, >, >=, <, <=, LIKE/ILIKE (case-insensitive, with SQL % \
+      wildcards -- a leading and/or trailing % only, not one in the middle), combined \
+      with AND/OR (AND binds tighter, override with parentheses) and negated with NOT. \
+      Examples: \"first_name ILIKE 'a%' and last_name ILIKE '%os'\", \
+      \"(first_name ILIKE 'a%' or last_name ILIKE '%os') and age >= 18\". A row missing \
+      the field entirely does not match. Rows are filtered before --exclude-null runs, \
+      and the row still counts toward -m/--max's scan cap either way -- --max bounds how \
+      many rows are read, not how many pass the filter."
+  ) ]
+  pub filter: Option<String>,
+
+  #[clap(
+    short = 'K', long = "skip-cols", value_parser,
+    help = "Comma-separated columns/nested paths to drop from output, e.g. \"width..depth\" or \"addresses.$.admin2\"",
+    long_help = "Comma-separated list of columns or nested output paths to drop, in three forms:\n\
+      - \"width..depth\" -- every column between the two (inclusive), by position in the \
+      sheet's natural left-to-right order. The endpoints may be natural keys, or A1 \
+      letters/R1C1 numbers in -A/-R mode, same identifiers --keys \"-name\" suppression \
+      accepts. An endpoint that doesn't resolve, or a range given in reverse order \
+      (the end column comes before the start column), is a clear error, not a silent \
+      guess.\n\
+      - \"width,depth\" -- just those two columns, independently -- equivalent to \
+      --keys \"-width,-depth\", without needing the leading \"-\" (every entry here is \
+      already a suppression).\n\
+      - \"size.depth\" / \"addresses.$.admin2\" -- dot-separated nested output paths, \
+      removed from the *final* row shape (after any --keys nesting), independent of \
+      which source column produced them. \"$\" recurses into every item of an array \
+      instead of matching a literal key. An unmatched or malformed nested path is \
+      silently ignored, same as an unmatched plain column name."
+  ) ]
+  pub skip_cols: Option<String>,
+
+  #[clap(
     short = 'X', long = "exclude-null", value_parser, default_value_t = false,
     help = "Drop any key whose value is JSON null from the output, instead of \"key\": null",
     long_help = "Drop any key whose value is JSON null from the output, recursively through \
@@ -250,6 +287,10 @@ pub type PendingKeyPattern = (String, String, Format);
 /// (natural key, A1 letter, or R1C1 number).
 pub type PendingSuppression = String;
 
+/// A "-K start..end" range endpoint pair -- like `PendingSuppression`, can't resolve to
+/// concrete columns until the real headers (and their positions) are known.
+pub type PendingRangeSuppression = (String, String);
+
 /// Splits `s` on `sep`, but never on a `sep` occurrence found inside a parenthesised
 /// group. `--keys` already uses `,` to separate entries and `|` to separate
 /// source_key/format/default within one entry -- but a `Format::Array` spec can carry a
@@ -278,12 +319,28 @@ fn split_top_level(s: &str, sep: char) -> Vec<String> {
     parts
 }
 
+/// Everything from `--keys`/`--skip-cols` that can't resolve into real `Column`s until
+/// the actual headers are known -- `from_args` is synchronous with no file access, so
+/// the caller resolves these against a header-only peek first (see `main.rs`).
+#[derive(Debug, Default)]
+pub struct PendingResolutions {
+    pub key_patterns: Vec<PendingKeyPattern>,
+    pub suppressions: Vec<PendingSuppression>,
+    pub range_suppressions: Vec<PendingRangeSuppression>,
+}
+
+impl PendingResolutions {
+    pub fn is_empty(&self) -> bool {
+        self.key_patterns.is_empty() && self.suppressions.is_empty() && self.range_suppressions.is_empty()
+    }
+}
+
 pub trait FromArgs {
-    fn from_args(args: &Args) -> Result<(Self, Vec<PendingKeyPattern>, Vec<PendingSuppression>), String> where Self: Sized;
+    fn from_args(args: &Args) -> Result<(Self, PendingResolutions), String> where Self: Sized;
 }
 
 impl FromArgs for OptionSet {
-    fn from_args(args: &Args) -> Result<(Self, Vec<PendingKeyPattern>, Vec<PendingSuppression>), String> {
+    fn from_args(args: &Args) -> Result<(Self, PendingResolutions), String> {
 
     // --keys entries are `source_key[:new_key][|format[|default]]`. source_key is matched
     // against each column's natural (auto-detected, snake_cased) header key, wherever that
@@ -370,6 +427,37 @@ impl FromArgs for OptionSet {
         columns.push(Column::from_source_key_with_format(&source_key, new_key.as_deref(), fmt, default_val, DateTimeMode::Full, false));
       }
     }
+
+    // --skip-cols/-K entries are one of: "start..end" (a positional range, resolved
+    // once headers are known -- see main.rs), "name" (a plain column suppression, same
+    // resolution as --keys "-name"), or "a.b.c" (a nested output path, removed from the
+    // finished row directly -- no header lookup needed, so it's set immediately).
+    let mut pending_range_suppressions: Vec<(String, String)> = vec![];
+    let mut excluded_paths: Vec<Vec<String>> = vec![];
+    if let Some(skip_string) = args.skip_cols.clone() {
+      for entry in skip_string.split(',') {
+        let entry = entry.trim();
+        if entry.is_empty() {
+          continue;
+        }
+        if let Some((start, end)) = entry.split_once("..") {
+          let (start, end) = (start.trim(), end.trim());
+          if start.is_empty() || end.is_empty() {
+            return Err(format!("invalid --skip-cols range '{entry}': both a start and end column are required"));
+          }
+          pending_range_suppressions.push((start.to_string(), end.to_string()));
+        } else if entry.contains('.') {
+          let path: Vec<String> = entry.split('.').map(|s| s.trim().to_string()).collect();
+          if path.iter().any(|s| s.is_empty()) {
+            return Err(format!("invalid --skip-cols path '{entry}': empty segment between dots"));
+          }
+          excluded_paths.push(path);
+        } else {
+          pending_suppressions.push(entry.to_string());
+        }
+      }
+    }
+
     let read_mode = if args.preview {
         ReadMode::PreviewMultiple
     } else if args.deferred {
@@ -469,11 +557,20 @@ impl FromArgs for OptionSet {
             decimal_comma: args.euro_number_format,
             datetime_mode,
             omit_null_values: args.exclude_null,
+            filter_rules: args.filter.as_deref()
+                .map(crate::filter_pattern::parse_filter)
+                .transpose()
+                .map_err(|msg| format!("invalid --filter: {msg}"))?,
+            excluded_paths,
             columns,
         },
         jsonl,
         read_mode,
         field_mode
-    }, pending_key_patterns, pending_suppressions))
+    }, PendingResolutions {
+        key_patterns: pending_key_patterns,
+        suppressions: pending_suppressions,
+        range_suppressions: pending_range_suppressions,
+    }))
     }
 }

@@ -1343,3 +1343,150 @@ fn keys_suppression_can_be_combined_with_a_placeholder_pattern_and_an_ordinary_o
         serde_json::json!({ "record_id": 1, "title": "Widget", "files": ["a.pdf", "b.pdf"] })
     );
 }
+
+#[test]
+fn filter_flag_and_logic_on_mapped_fields() {
+    let path = write_csv(
+        "filter_and.csv",
+        "first_name,last_name,age\nAmos,Santos,25\nBob,Smith,30\nAlice,Jones,16\nCarol,Santos,40\n",
+    );
+    let out = run(&["-jr", "--filter", "first_name ILIKE 'a%' and last_name  ILIKE '%os' ", path.to_str().unwrap()]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let v = parse_json(&stdout(&out));
+    assert_eq!(v.as_array().unwrap().len(), 1);
+    assert_eq!(v[0]["first_name"], "Amos");
+}
+
+#[test]
+fn filter_flag_or_logic_on_mapped_fields() {
+    let path = write_csv(
+        "filter_or.csv",
+        "first_name,last_name,age\nAmos,Santos,25\nBob,Smith,30\nAlice,Jones,16\nCarol,Santos,40\n",
+    );
+    let out = run(&["-jr", "--filter", "first_name ILIKE 'a%'  or last_name  ILIKE '%os' ", path.to_str().unwrap()]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let v = parse_json(&stdout(&out));
+    let names: Vec<&str> = v.as_array().unwrap().iter().map(|r| r["first_name"].as_str().unwrap()).collect();
+    assert_eq!(names, vec!["Amos", "Alice", "Carol"]);
+}
+
+#[test]
+fn filter_flag_and_with_nested_or_logic_on_mapped_fields() {
+    let path = write_csv(
+        "filter_and_or.csv",
+        "first_name,last_name,age\nAmos,Santos,25\nBob,Smith,30\nAlice,Jones,16\nCarol,Santos,40\n",
+    );
+    let out = run(&[
+        "-jr", "--filter", "(first_name ILIKE 'a%' or last_name  ILIKE '%os' ) and age>=18",
+        path.to_str().unwrap(),
+    ]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let v = parse_json(&stdout(&out));
+    let names: Vec<&str> = v.as_array().unwrap().iter().map(|r| r["first_name"].as_str().unwrap()).collect();
+    // Alice matches the OR (starts with 'a') but fails age >= 18, so she's excluded
+    assert_eq!(names, vec!["Amos", "Carol"]);
+}
+
+#[test]
+fn filter_flag_unbalanced_parens_is_a_clear_error_not_silently_accepted() {
+    let path = write_csv("filter_bad_syntax.csv", "first_name\nAmos\n");
+    let out = run(&["-jr", "--filter", "first_name ILIKE 'a%' )", path.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("invalid --filter"), "got: {}", stderr(&out));
+}
+
+#[test]
+fn filter_flag_does_not_extend_the_max_row_scan_cap() {
+    let path = write_csv(
+        "filter_cap.csv",
+        "first_name,age\nBob,16\nAmos,25\nCarol,40\n",
+    );
+    let out = run(&["-jr", "-m", "1", "--filter", "age >= 18", path.to_str().unwrap()]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let v = parse_json(&stdout(&out));
+    assert!(v.as_array().unwrap().is_empty(), "the only scanned row (Bob, 16) doesn't match, and -m must not extend the scan to compensate");
+}
+
+#[test]
+fn tsv_files_split_on_tab_delimiter() {
+    // Regression test for a one-character typo in the library (b't' instead of b'\t')
+    // that made TSV files split on the literal letter 't' instead of an actual tab --
+    // TSV is the default copy/paste format from spreadsheet apps, so this matters.
+    let path = write_csv("tab_delimiter.tsv", "sku\tname\nSKU001\tWidget\nSKU002\tGadget\n");
+    let out = run(&["-jr", path.to_str().unwrap()]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let v = parse_json(&stdout(&out));
+    assert_eq!(v[0], serde_json::json!({ "sku": "SKU001", "name": "Widget" }));
+    assert_eq!(v[1], serde_json::json!({ "sku": "SKU002", "name": "Gadget" }));
+}
+
+#[test]
+fn skip_cols_range_excludes_columns_inclusive() {
+    let path = write_csv(
+        "skip_cols_range.csv",
+        "id,title,width,height,depth,colour\n1,Widget,10,20,30,red\n",
+    );
+    let out = run(&["-jr", "-K", "width..depth", path.to_str().unwrap()]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let v = parse_json(&stdout(&out));
+    assert_eq!(v[0], serde_json::json!({ "id": 1, "title": "Widget", "colour": "red" }));
+}
+
+#[test]
+fn skip_cols_list_keeps_columns_in_between() {
+    let path = write_csv(
+        "skip_cols_list.csv",
+        "id,width,height,depth\n1,10,20,30\n",
+    );
+    let out = run(&["-jr", "-K", "width,depth", path.to_str().unwrap()]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let v = parse_json(&stdout(&out));
+    assert_eq!(v[0], serde_json::json!({ "id": 1, "height": 20 }));
+}
+
+#[test]
+fn skip_cols_reversed_range_is_a_clear_error() {
+    let path = write_csv("skip_cols_reversed.csv", "id,width,height,depth\n1,10,20,30\n");
+    let out = run(&["-jr", "-K", "depth..width", path.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("reverse the range"), "got: {}", stderr(&out));
+}
+
+#[test]
+fn skip_cols_unknown_range_endpoint_is_a_clear_error() {
+    let path = write_csv("skip_cols_unknown.csv", "id,width\n1,10\n");
+    let out = run(&["-jr", "-K", "width..nosuch", path.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("not found"), "got: {}", stderr(&out));
+}
+
+#[test]
+fn skip_cols_dollar_wildcard_removes_a_field_from_every_array_item() {
+    let path = write_csv(
+        "skip_cols_dollar.csv",
+        "id,line1_1,admin2_1,line1_2,admin2_2\n1,1 Road,Countyshire,2 Street,Othercounty\n",
+    );
+    let out = run(&[
+        "-jr", "-k", "line1_[n]:addresses[].{n}{line1},admin2_[n]:addresses[].{n}{admin2}",
+        "-K", "addresses.$.admin2",
+        path.to_str().unwrap(),
+    ]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let v = parse_json(&stdout(&out));
+    assert_eq!(
+        v[0]["addresses"],
+        serde_json::json!([{"n": 1, "line1": "1 Road"}, {"n": 2, "line1": "2 Street"}])
+    );
+}
+
+#[test]
+fn skip_cols_can_combine_range_list_and_plain_forms_in_one_flag() {
+    let path = write_csv(
+        "skip_cols_mixed.csv",
+        "id,title,width,height,depth,colour,notes\n1,Widget,10,20,30,red,fragile\n",
+    );
+    let out = run(&["-jr", "-K", "width..depth,notes", path.to_str().unwrap()]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let v = parse_json(&stdout(&out));
+    assert_eq!(v[0], serde_json::json!({ "id": 1, "title": "Widget", "colour": "red" }));
+}

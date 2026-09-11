@@ -138,6 +138,46 @@ supports, comma-separated:
 spread-cli people.csv -rjA --keys "-d,b:first_name"
 ```
 
+### Skipping ranges and nested paths (`--skip-cols`) <a id="skipping-ranges-and-nested-paths"></a>
+
+For dropping more than a column or two at once, `-K`/`--skip-cols` takes a
+comma-separated list with three forms, none needing the leading `-` (everything here is
+already a suppression):
+
+```sh
+spread-cli products.csv -rj -K "width..depth"           # every column from width to depth, inclusive
+spread-cli products.csv -rj -K "width,depth"             # just those two -- keeps whatever's between them
+```
+
+The `a.b.c` form targets output that only exists once a `--keys` pattern has actually
+nested something -- on its own, against a plain flat CSV, it's a no-op (there's nothing
+at that path to remove yet):
+
+```sh
+# without -K: {"n": 1, "line1": "1 Road", "admin2": "Countyshire"} per address
+# with -K "addresses.$.admin2": the same, minus "admin2", in every item
+spread-cli contacts.csv -rj \
+  --keys "line1_[n]:addresses[].{n}{line1},admin2_[n]:addresses[].{n}{admin2}" \
+  -K "addresses.\$.admin2"
+```
+
+- **`start..end`** -- a range by position in the sheet's natural left-to-right column
+  order (same natural-key/A1-letter/R1C1-number identifiers as plain suppression). A
+  range given backwards (the end column actually comes before the start column in the
+  sheet), or an endpoint that doesn't match any column, is a clear error -- not a silent
+  guess at which way you meant it.
+- **`name,name2`** -- independent single-column suppressions, equivalent to `--keys
+  "-name,-name2"` without the `-` prefix per entry.
+- **`a.b.c`** -- a dot-separated *output* path, removed from the row's final shape
+  (after any `--keys` nesting) rather than resolved against a source column at all --
+  this is the only form that can reach inside a `--keys`-built nested object or array.
+  `$` as a path segment means "every item of this array" rather than a literal key
+  (`addresses.$.admin2` drops `admin2` from each address, not the whole array). An
+  unmatched or malformed nested path is silently ignored, same as an unmatched plain
+  column name.
+
+All three forms can be mixed in one comma-separated `-K` value.
+
 ### Splitting one column into an array <a id="splitting-one-column-into-an-array"></a>
 
 The placeholder patterns above merge *several* columns into one nested field. For a
@@ -168,6 +208,52 @@ the underlying library), not a placeholder pattern -- no `[name]`/`{name}` captu
 involved, and it can be freely mixed with renames, other overrides, and placeholder
 patterns in the same comma-separated `--keys` value.
 
+## Filtering rows (`--filter`) <a id="filtering-rows-filter"></a>
+
+Drop rows that don't match a SQL-like boolean expression, evaluated against each row's
+*final* keys -- after any `--keys` renames, not raw source columns:
+
+```sh
+spread-cli people.csv -rj --filter "age >= 18"
+spread-cli people.csv -rj --filter "first_name ILIKE 'a%' and last_name ILIKE '%os'"
+spread-cli people.csv -rj --filter "(first_name ILIKE 'a%' or last_name ILIKE '%os') and age >= 18"
+spread-cli people.csv -rj --filter "country_code IN (us, gb, ca)"
+spread-cli products.csv -rj --keys "size_{x}:size.{x}" --filter "size.width < 10"
+```
+
+- Comparisons: `=`, `!=`/`<>`, `>`, `>=`, `<`, `<=`, and `LIKE`/`ILIKE` (`ILIKE` is
+  case-insensitive; `LIKE` isn't) with SQL `%` wildcards -- `'a%'` (starts with),
+  `'%os'` (ends with), `'%foo%'` (contains), or no `%` at all (exact match). A `%` in
+  the *middle* of a pattern (`'a%b'`) isn't supported and is a clear parse error, not a
+  silently wrong match -- that needs two independent anchors, which no single check can
+  express in one pass; split it into two `AND`-ed conditions instead.
+- `IN (...)`/`NOT IN (...)` -- the field's own value equals (or doesn't equal) one of
+  a comma-separated list. `ANY (...)`/`NOT ANY (...)` is the array counterpart -- the
+  field's own value must itself be an array (e.g. from `--keys "tags|text[]"`) sharing
+  at least one element with the list; a plain scalar field never satisfies `ANY`, that's
+  what `IN` is for. Quotes around a list/comparison value are only *required* to group
+  a value containing a space or comma into one token -- `IN (us, gb, ca)` and
+  `IN ('us', 'gb', 'ca')` are equivalent, and a bare value can't reuse a reserved word
+  (`and`, `in`, `like`, ...) as a literal, same as an unquoted identifier in SQL.
+- A field reference can be a dot-path into an object `--keys` has already nested
+  (`size.width`, once `--keys "size_{x}:size.{x}"` has mapped `size_width`/`size_height`
+  columns into one `size` object), not just a top-level key. It can't reach inside an
+  *array* of nested objects, though (`addresses.admin2` where `addresses` is itself an
+  array) -- matching through an array raises a real "does the row match if *any* item
+  satisfies it, or only if *all* do" question that's deliberately left open rather than
+  decided silently.
+- Combine with `AND`/`OR` (case-insensitive) -- `AND` binds tighter than `OR`, override
+  with parentheses -- and negate with `NOT` (`NOT (age >= 18)`, or `first_name NOT ILIKE
+  'a%'`).
+- A row missing the field entirely does not match (a filter never treats an absent
+  column as satisfying the condition). Filtering always runs before `-X`/
+  `--exclude-null`, so a field `-X` would otherwise strip is still present with its
+  real value when a filter checks it.
+- `-m`/`--max` still bounds how many rows are *read*, not how many *pass* the filter --
+  a heavily-filtered file can return fewer than `-m` rows even when more matches exist
+  further down, since `--max` is a scan cap for quick structural preview of large files,
+  not a "collect N matching rows" limit.
+
 ## Options
 
 - ```path``` Local path to the source spreadsheet or CSV/TSV file
@@ -181,6 +267,8 @@ patterns in the same comma-separated `--keys` value.
   - `--keys "-colour"` (leading `-`) suppresses that column instead -- see [Suppressing columns](#suppressing-columns)
   - `--keys "file_[n]:files[]"` and two other placeholder patterns merge several columns into nested output -- see [Column mapping patterns](#column-mapping-patterns-keys)
   - `--keys "tags|text[](,)"` splits *one* column's delimited text into a JSON array instead -- see [Splitting one column into an array](#splitting-one-column-into-an-array)
+- ```-f, --filter``` drops rows that don't match a SQL-like boolean expression against the row's final keys, e.g. `"age >= 18 and name ILIKE 'a%'"` -- see [Filtering rows](#filtering-rows-filter)
+- ```-K, --skip-cols``` drops a range (`"width..depth"`), list (`"width,depth"`), or nested output path (`"addresses.$.admin2"`) of columns from output -- see [Skipping ranges and nested paths](#skipping-ranges-and-nested-paths)
 - ```-X, --exclude-null``` drops any key whose value is JSON `null` from output, recursively through nested objects/arrays too, instead of emitting `"key": null`. Only ever targets genuine `null` -- an empty string is a different, deliberate value and is left alone.
 - ```-m, --max``` max rows *per sheet* (with `-p`, every sheet gets its own cap, default 10)
 - ```-t, --top``` header row number, 1-based, if the header isn't on the first row -- e.g. a title/notes row above it. If not given, the header row is detected automatically.
