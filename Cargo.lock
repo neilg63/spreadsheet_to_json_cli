@@ -843,7 +843,7 @@ dependencies = [
 
 [[package]]
 name = "spread-cli"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "args",
  "clap 4.6.2",
@@ -859,7 +859,9 @@ dependencies = [
 
 [[package]]
 name = "spreadsheet-to-json"
-version = "0.4.0"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7637bb1af233519f95cb49ef75f85b9f86c253bb411a5472b20d80d9184d713a"
 dependencies = [
  "alphanumeric",
  "calamine",
