@@ -80,8 +80,28 @@ pub struct Args {
   ) ]
   pub number: Option<u32>,
 
-  #[clap(short, long, value_parser, help = "Maximum number of rows to return (per sheet, when combined with --preview)") ]
+  #[clap(
+    short, long, value_parser,
+    help = "Maximum number of rows to return (per sheet, when combined with --preview)",
+    long_help = "Maximum number of rows to *scan* (per sheet, when combined with \
+      --preview) -- keeps scanning up to this many rows regardless of how many pass \
+      --filter, which suits pagination/batch processing (fetch the next N raw rows, a \
+      stable count each call). To cap how many *matching* rows come back instead, use \
+      --limit/-L."
+  ) ]
   pub max: Option<u32>,
+
+  #[clap(
+    short = 'L', long, value_parser,
+    help = "Maximum number of matching rows to return, e.g. combined with --filter",
+    long_help = "Maximum number of matching rows to return -- distinct from -m/--max, \
+      which bounds how many rows are *scanned* regardless of how many match. Scanning \
+      stops as soon as this many rows have matched (or, with no --filter, simply been \
+      read as data), so --limit is the right choice for \"give me the first N results\"; \
+      --max is the right choice for pagination/batch processing. The two compose when \
+      both are set -- whichever bound is hit first wins."
+  ) ]
+  pub limit: Option<u32>,
 
   #[clap(
     short = 't', long, value_parser, conflicts_with = "header_index",
@@ -142,7 +162,8 @@ pub struct Args {
       \"(first_name ILIKE 'a%' or last_name ILIKE '%os') and age >= 18\". A row missing \
       the field entirely does not match. Rows are filtered before --exclude-null runs, \
       and the row still counts toward -m/--max's scan cap either way -- --max bounds how \
-      many rows are read, not how many pass the filter."
+      many rows are read, not how many pass the filter. To cap how many matching rows \
+      come back instead, use --limit/-L."
   ) ]
   pub filter: Option<String>,
 
@@ -544,6 +565,7 @@ impl FromArgs for OptionSet {
         indices: vec![index],
         path: args.path.clone(),
         max,
+        limit: args.limit,
         header_row,
         data_row_index,
         // spread-cli has no --header-span flag yet -- always a single header row for now.

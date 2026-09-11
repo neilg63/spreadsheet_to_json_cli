@@ -1029,6 +1029,36 @@ fn deferred_flag_returns_immediately_and_streams_in_the_background() {
 }
 
 #[test]
+fn deferred_flag_respects_max_row_scan_cap() {
+    // Regression test: the library's CSV streaming path (which -d/--deferred uses)
+    // never checked -m/--max at all -- it would export every row in the file
+    // regardless of the cap, unlike the direct/in-memory read path.
+    let path = fixture("products.csv");
+    let export_path = std::env::temp_dir().join("spread_cli_test_deferred_max.jsonl");
+    let log_path = std::env::temp_dir().join("spread_cli_test_deferred_max.jsonl.log");
+    let _ = std::fs::remove_file(&export_path);
+    let _ = std::fs::remove_file(&log_path);
+
+    let out = run(&[
+        "-r", "-l", "-d", "-m", "2",
+        "--output", export_path.to_str().unwrap(),
+        path.to_str().unwrap(),
+    ]);
+    assert!(out.status.success());
+
+    let written = wait_for_file_lines(&export_path, 2);
+    // products.csv has 3 data rows -- give the (tiny) background export a moment to
+    // finish, then confirm it never wrote a third line past the -m 2 cap.
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    let written = std::fs::read_to_string(&export_path).unwrap_or(written);
+    let rows: Vec<serde_json::Value> = written.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+    assert_eq!(rows.len(), 2, "-m 2 should cap the streamed export at 2 rows, not export every row in the file");
+
+    let _ = std::fs::remove_file(&export_path);
+    let _ = std::fs::remove_file(&log_path);
+}
+
+#[test]
 fn deferred_flag_creates_parent_directories_for_custom_file_path() {
     let path = fixture("products.csv");
     let export_dir = std::env::temp_dir().join("spread_cli_test_nested_export_dir");
@@ -1405,6 +1435,49 @@ fn filter_flag_does_not_extend_the_max_row_scan_cap() {
     assert!(out.status.success(), "stderr: {}", stderr(&out));
     let v = parse_json(&stdout(&out));
     assert!(v.as_array().unwrap().is_empty(), "the only scanned row (Bob, 16) doesn't match, and -m must not extend the scan to compensate");
+}
+
+#[test]
+fn limit_flag_caps_matching_rows_not_scanned_rows() {
+    // Three rows match the filter; -L 2 should stop collecting after the first two
+    // matches, unlike -m which bounds how many rows are *scanned* regardless of match.
+    let path = write_csv(
+        "limit_flag.csv",
+        "first_name,age\nBob,16\nAmos,25\nCarol,40\nDana,50\n",
+    );
+    let out = run(&["-jr", "-L", "2", "--filter", "age >= 18", path.to_str().unwrap()]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let v = parse_json(&stdout(&out));
+    let rows = v.as_array().unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0]["first_name"], "Amos");
+    assert_eq!(rows[1]["first_name"], "Carol");
+}
+
+#[test]
+fn limit_flag_composes_with_max_scan_cap() {
+    // -m 1 bounds scanning to the first data row -- even though -L 5 would allow up to
+    // five matches, only one row is ever scanned, so at most one can be captured.
+    let path = write_csv(
+        "limit_and_max.csv",
+        "first_name,age\nAmos,25\nCarol,40\nDana,50\n",
+    );
+    let out = run(&["-jr", "-m", "1", "-L", "5", "--filter", "age >= 18", path.to_str().unwrap()]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let v = parse_json(&stdout(&out));
+    assert_eq!(v.as_array().unwrap().len(), 1, "-m's scan cap should still apply even though -L alone would have allowed more");
+}
+
+#[test]
+fn limit_flag_without_a_filter_caps_the_plain_row_count() {
+    let path = write_csv(
+        "limit_flag_no_filter.csv",
+        "first_name,age\nBob,16\nAmos,25\nCarol,40\n",
+    );
+    let out = run(&["-jr", "-L", "2", path.to_str().unwrap()]);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let v = parse_json(&stdout(&out));
+    assert_eq!(v.as_array().unwrap().len(), 2);
 }
 
 #[test]

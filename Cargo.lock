@@ -363,6 +363,12 @@ dependencies = [
 
 [[package]]
 name = "enclose-strings"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a159ae1d9d827aa1b9d9aacb555fc9d5e817859dc0c2521f2ea9b5bf87643585"
+
+[[package]]
+name = "enclose-strings"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d28ed42c85279894da65c47ccbe150e67ef09876bdece71daedec111b9211666"
@@ -848,7 +854,7 @@ dependencies = [
  "args",
  "clap 4.6.2",
  "dotenv",
- "enclose-strings",
+ "enclose-strings 0.3.0",
  "rust_xlsxwriter",
  "serde_json",
  "simple-string-patterns",
@@ -860,12 +866,14 @@ dependencies = [
 [[package]]
 name = "spreadsheet-to-json"
 version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "10bc67f2aa00542390b9ad6a370359f02fe02061ded68444cb3b0f5b56381c0b"
 dependencies = [
  "alphanumeric",
  "calamine",
  "chrono",
  "csv",
- "enclose-strings",
+ "enclose-strings 0.2.0",
  "fuzzy-datetime",
  "heck",
  "indexmap",
@@ -1183,3 +1191,7 @@ dependencies = [
  "log",
  "simd-adler32",
 ]
+
+[[patch.unused]]
+name = "spreadsheet-to-json"
+version = "0.5.0"

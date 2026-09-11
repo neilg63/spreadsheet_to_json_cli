@@ -252,7 +252,17 @@ spread-cli products.csv -rj --keys "size_{x}:size.{x}" --filter "size.width < 10
 - `-m`/`--max` still bounds how many rows are *read*, not how many *pass* the filter --
   a heavily-filtered file can return fewer than `-m` rows even when more matches exist
   further down, since `--max` is a scan cap for quick structural preview of large files,
-  not a "collect N matching rows" limit.
+  not a "collect N matching rows" limit. To cap the number of *matching* rows instead,
+  use `-L`/`--limit`:
+
+  ```sh
+  spread-cli people.csv -rj --filter "age >= 18" --limit 20
+  ```
+
+  Scanning stops as soon as `--limit` rows have matched, rather than reading the whole
+  file first -- the two flags compose when both are set, whichever bound is hit first
+  wins (e.g. `-m 100 --limit 20` stops at 20 matches, or after 100 rows scanned,
+  whichever comes first).
 
 ## Options
 
@@ -270,7 +280,8 @@ spread-cli products.csv -rj --keys "size_{x}:size.{x}" --filter "size.width < 10
 - ```-f, --filter``` drops rows that don't match a SQL-like boolean expression against the row's final keys, e.g. `"age >= 18 and name ILIKE 'a%'"` -- see [Filtering rows](#filtering-rows-filter)
 - ```-K, --skip-cols``` drops a range (`"width..depth"`), list (`"width,depth"`), or nested output path (`"addresses.$.admin2"`) of columns from output -- see [Skipping ranges and nested paths](#skipping-ranges-and-nested-paths)
 - ```-X, --exclude-null``` drops any key whose value is JSON `null` from output, recursively through nested objects/arrays too, instead of emitting `"key": null`. Only ever targets genuine `null` -- an empty string is a different, deliberate value and is left alone.
-- ```-m, --max``` max rows *per sheet* (with `-p`, every sheet gets its own cap, default 10)
+- ```-m, --max``` max rows *scanned* per sheet (with `-p`, every sheet gets its own cap, default 10) -- keeps scanning up to this many rows regardless of how many pass `--filter`; suits pagination/batch processing. See [Filtering rows](#filtering-rows-filter) for how this differs from `-L`/`--limit`.
+- ```-L, --limit``` max *matching* rows returned -- distinct from `-m`/`--max` above; scanning stops as soon as this many rows have matched (or, with no `--filter`, simply been read). See [Filtering rows](#filtering-rows-filter).
 - ```-t, --top``` header row number, 1-based, if the header isn't on the first row -- e.g. a title/notes row above it. If not given, the header row is detected automatically.
 - ```-b, --body-start``` row number, 1-based, where the real data begins, if there's a gap below the header (a blank or subtitle row). Rows between the header and this one are skipped entirely. Defaults to immediately after the header row.
   - Example: title in row 1, notes in row 2, real header in row 3, blank row before data in row 5 -- `-t 3 -b 5` skips straight past the blank row instead of capturing it as a row of nulls.
